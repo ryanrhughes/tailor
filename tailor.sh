@@ -1,0 +1,52 @@
+mkdir -p ~/Work/
+
+# Clone repos only if they don't already exist
+if [ ! -d ~/Work/omarchy/omarchy-installer ]; then
+  gh repo clone basecamp/omarchy ~/Work/omarchy/omarchy-installer
+fi
+
+if [ ! -d ~/Work/omarchy/omarchy-iso ]; then
+  gh repo clone omacom-io/omarchy-iso ~/Work/omarchy/omarchy-iso
+fi
+if [ ! -d ~/Work/omarchy/omarchy-pkgs ]; then
+  gh repo clone omacom-io/omarchy-pkgs
+fi
+if [ ! -d ~/Work/kanata-homerow-mods ]; then
+  gh repo clone ryanrhughes/kanata-homerow-mods
+fi
+
+docker run -d --name mailcatcher -p 1025:1025 -p 1080:1080 dockage/mailcatcher:0.9.0
+
+# Setup SSH config from 1Password (modular script)
+if [ -f ./setup-ssh.sh ]; then
+  ./setup-ssh.sh
+fi
+
+# Copy Hypr config files (excluding ssh directory)
+mkdir -p ~/.config
+find config -type f ! -path "config/ssh/*" -exec sh -c 'mkdir -p ~/.config/$(dirname ${1#config/}) && cp "$1" ~/.config/${1#config/}' _ {} \;
+
+# Copy environment variables from ~/.config/tailor/ to ~/.config/hypr/
+if [ -f ~/.config/tailor/envs.conf ]; then
+  cp ~/.config/tailor/envs.conf ~/.config/hypr/envs.conf
+  echo "✓ Copied envs.conf to Hyprland config"
+else
+  echo "⚠ envs.conf not found at ~/.config/tailor/envs.conf"
+  echo "  Copy config/hypr/envs.conf.example to ~/.config/tailor/envs.conf and edit with your values"
+fi
+
+# Add source line to hyprland.conf if it doesn't already exist
+if ! grep -q "source = ~/.config/hypr/windows.conf" ~/.config/hypr/hyprland.conf 2>/dev/null; then
+  echo "source = ~/.config/hypr/windows.conf" >> ~/.config/hypr/hyprland.conf
+fi
+
+# Check monitor resolution and adjust monitors.conf for 4K displays
+if pgrep -x Hyprland &> /dev/null; then
+  resolution=$(hyprctl monitors -j | jq -r '.[0] | "\(.width)x\(.height)"')
+  if [ "$resolution" = "3840x2160" ] && [ -f ~/.config/hypr/monitors.conf ]; then
+    sed -i 's/^# monitor=,preferred,auto,1.666667/monitor=,preferred,auto,1.666667/' ~/.config/hypr/monitors.conf
+    sed -i 's/^monitor=,preferred,auto,auto/# monitor=,preferred,auto,auto/' ~/.config/hypr/monitors.conf
+  fi
+fi
+
+

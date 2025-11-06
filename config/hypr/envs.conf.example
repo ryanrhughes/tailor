@@ -1,0 +1,5 @@
+# Hyprland Environment Variables
+# Copy this file to ~/.config/tailor/envs.conf and fill in your actual values
+# This file will be sourced by your Hyprland config
+
+env = webui_url,https://your-webui-url.example.com/

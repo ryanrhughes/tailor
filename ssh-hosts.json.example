@@ -1,0 +1,16 @@
+[
+  {
+    "host": "my-server",
+    "uuid": "your-1password-item-uuid-here",
+    "account": "your-account.1password.com"
+  },
+  {
+    "host": "prod-server",
+    "uuid": "another-1password-item-uuid",
+    "account": "your-account.1password.com",
+    "options": {
+      "ForwardAgent": "yes",
+      "ServerAliveInterval": 60
+    }
+  }
+]
