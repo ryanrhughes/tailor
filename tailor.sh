@@ -9,10 +9,10 @@ if [ ! -d ~/Work/omarchy/omarchy-iso ]; then
   gh repo clone omacom-io/omarchy-iso ~/Work/omarchy/omarchy-iso
 fi
 if [ ! -d ~/Work/omarchy/omarchy-pkgs ]; then
-  gh repo clone omacom-io/omarchy-pkgs
+  gh repo clone omacom-io/omarchy-pkgs ~/Work/omarchy/omarchy-pkgs
 fi
 if [ ! -d ~/Work/kanata-homerow-mods ]; then
-  gh repo clone ryanrhughes/kanata-homerow-mods
+  gh repo clone ryanrhughes/kanata-homerow-mods ~/Work/kanata-homerow-mods
 fi
 
 docker run -d --name mailcatcher -p 1025:1025 -p 1080:1080 dockage/mailcatcher:0.9.0
@@ -48,5 +48,28 @@ if pgrep -x Hyprland &> /dev/null; then
     sed -i 's/^monitor=,preferred,auto,auto/# monitor=,preferred,auto,auto/' ~/.config/hypr/monitors.conf
   fi
 fi
+
+# Link home directories to Dropbox
+for dir in Pictures Videos Documents; do
+  home_dir=~/"$dir"
+  dropbox_dir=~/Dropbox/"$dir"
+  
+  # Only process if Dropbox directory exists
+  if [ -d "$dropbox_dir" ]; then
+    # If home directory exists and is not a symlink
+    if [ -e "$home_dir" ] && [ ! -L "$home_dir" ]; then
+      echo "Backing up ~/$dir to ~/${dir}.bak"
+      mv "$home_dir" "${home_dir}.bak"
+      ln -s "$dropbox_dir" "$home_dir"
+      echo "✓ Linked ~/$dir to ~/Dropbox/$dir"
+    # If home directory doesn't exist, create the symlink
+    elif [ ! -e "$home_dir" ]; then
+      ln -s "$dropbox_dir" "$home_dir"
+      echo "✓ Linked ~/$dir to ~/Dropbox/$dir"
+    else
+      echo "✓ ~/$dir is already a symlink"
+    fi
+  fi
+done
 
 

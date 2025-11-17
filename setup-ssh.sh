@@ -51,6 +51,12 @@ setup_ssh_config() {
     uuid=$(echo "$host_config" | jq -r '.uuid')
     account=$(echo "$host_config" | jq -r '.account // empty')
     
+    # Check if host already exists in SSH config
+    if [ -f ~/.ssh/config ] && grep -q "^Host $host$" ~/.ssh/config; then
+      echo "  ✓ Host $host already exists in SSH config, skipping"
+      continue
+    fi
+    
     if [ -z "$account" ]; then
       echo "  ⚠ No account specified for $host, skipping"
       continue
