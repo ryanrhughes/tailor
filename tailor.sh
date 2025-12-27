@@ -22,9 +22,14 @@ if [ -f ./setup-ssh.sh ]; then
   ./setup-ssh.sh
 fi
 
-# Copy Hypr config files (excluding ssh directory)
+# Copy Hypr config files (excluding ssh, opencode, amp directories - those have their own setup)
 mkdir -p ~/.config
-find config -type f ! -path "config/ssh/*" -exec sh -c 'mkdir -p ~/.config/$(dirname ${1#config/}) && cp "$1" ~/.config/${1#config/}' _ {} \;
+find config -type f ! -path "config/ssh/*" ! -path "config/opencode/*" ! -path "config/amp/*" -exec sh -c 'mkdir -p ~/.config/$(dirname ${1#config/}) && cp "$1" ~/.config/${1#config/}' _ {} \;
+
+# Setup AI coding tools (OpenCode, Amp)
+if [ -f ./setup-ai.sh ]; then
+  ./setup-ai.sh
+fi
 
 # Copy environment variables from ~/.config/tailor/ to ~/.config/hypr/
 if [ -f ~/.config/tailor/envs.conf ]; then

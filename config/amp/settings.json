@@ -1,0 +1,33 @@
+{
+  "amp.mcpServers": {
+    "figma": {
+      "command": "node",
+      "args": [
+        "/home/ryan/.local/share/figma-mcp/node_modules/figma-developer-mcp/dist/bin.js",
+        "--stdio"
+      ],
+      "env": {
+        "FIGMA_API_KEY": "${FIGMA_API_KEY}"
+      }
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "chrome-devtools-mcp@latest",
+        "--isolated=true",
+        "--channel=canary",
+        "--headless=true"
+      ]
+    },
+    "context7": {
+      "url": "https://mcp.context7.com/mcp"
+    },
+    "gh_grep": {
+      "url": "https://mcp.grep.app"
+    }
+  },
+  "amp.guardedFiles.allowlist": [
+    "/home/ryan/.config/amp/settings.json"
+  ],
+  "amp.dangerouslyAllowAll": true
+}

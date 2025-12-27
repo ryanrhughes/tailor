@@ -90,6 +90,70 @@ Add SSH config options per host:
 - SSH config from 1Password credentials
 - Monitor settings for 4K displays
 - Mailcatcher Docker container
+- AI coding tools (OpenCode, Amp) with MCP servers
+
+## AI Coding Tools
+
+Tailor configures [OpenCode](https://opencode.ai) and [Amp](https://ampcode.com) with shared MCP servers.
+
+### Configured MCP Servers
+
+| Server | Type | Description |
+|--------|------|-------------|
+| figma | local | Figma design integration (requires `FIGMA_API_KEY`) |
+| chrome-devtools | local | Browser DevTools control |
+| beads | local | Beads MCP |
+| context7 | remote | Documentation search |
+| gh_grep | remote | GitHub code search |
+
+### Adding/Removing MCP Servers
+
+Edit the config files directly:
+- `config/opencode/opencode.jsonc` - OpenCode configuration
+- `config/amp/settings.json` - Amp configuration
+
+Then run `./tailor.sh` or `./setup-ai.sh` to apply changes.
+
+### Disabling a Server
+
+**OpenCode**: Set `"enabled": false` on the server entry.
+
+**Amp**: Remove the server from `amp.mcpServers` or comment it out.
+
+### Environment Variables
+
+Some MCP servers require API keys. Add them to your shell profile:
+
+```bash
+export FIGMA_API_KEY="your-api-key"
+```
+
+### OAuth Servers
+
+For MCP servers requiring OAuth authentication:
+
+```bash
+# OpenCode
+opencode mcp auth sentry
+
+# Amp
+amp mcp oauth login sentry
+```
+
+### Custom Commands (OpenCode)
+
+Custom commands are installed to `~/.config/opencode/command/`:
+
+| Command | Description |
+|---------|-------------|
+| `/create-prd` | Generate a Product Requirements Document from a feature description |
+| `/generate-tasks` | Generate a task list from requirements or PRD |
+
+Usage:
+```
+/create-prd Add a dark mode toggle to the settings page
+/generate-tasks @tasks/prd-dark-mode.md
+```
 
 ## Security
 

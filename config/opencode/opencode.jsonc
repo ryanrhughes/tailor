@@ -1,0 +1,29 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["@franlol/opencode-md-table-formatter@0.0.3"],
+  "mcp": {
+    "figma": {
+      "type": "local",
+      "command": ["node", "/home/ryan/.local/share/figma-mcp/node_modules/figma-developer-mcp/dist/bin.js", "--stdio"],
+      "environment": {
+        "FIGMA_API_KEY": "{env:FIGMA_API_KEY}"
+      },
+      "enabled": true
+    },
+    "chrome-devtools": {
+      "type": "local",
+      "command": ["npx", "chrome-devtools-mcp@latest", "--isolated=true", "--channel=canary", "--headless=true"],
+      "enabled": true
+    },
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
+      "enabled": true
+    },
+    "gh_grep": {
+      "type": "remote",
+      "url": "https://mcp.grep.app",
+      "enabled": true
+    }
+  }
+}
