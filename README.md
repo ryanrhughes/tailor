@@ -105,6 +105,7 @@ Tailor configures [OpenCode](https://opencode.ai) and [Amp](https://ampcode.com)
 | beads | local | Beads MCP |
 | context7 | remote | Documentation search |
 | gh_grep | remote | GitHub code search |
+| agent-browser | global | Web automation and browser control ([Vercel Labs](https://github.com/vercel-labs/agent-browser)) |
 
 ### Adding/Removing MCP Servers
 

@@ -12,7 +12,7 @@ echo "Setting up AI coding tools..."
 install_deps() {
   echo ""
   echo "=== Dependencies ==="
-  
+
   # Install beads MCP server
   if ! command -v beads-mcp &> /dev/null; then
     echo "  Installing beads-git..."
@@ -21,7 +21,7 @@ install_deps() {
   else
     echo "  ✓ beads-mcp already installed"
   fi
-  
+
   # Install figma-developer-mcp locally
   # Note: Uses --ignore-scripts to bypass sharp's broken install check on Node 25+
   local figma_mcp_dir="$HOME/.local/share/figma-mcp"
@@ -36,6 +36,52 @@ install_deps() {
   else
     echo "  ✓ figma-developer-mcp already installed"
   fi
+}
+
+# Install AI skills
+install_skills() {
+  echo ""
+  echo "=== AI Skills ==="
+
+  # Check if skills CLI is available
+  if ! command -v npx &> /dev/null; then
+    echo "  ! npx not found, skipping skill installation"
+    return 1
+  fi
+
+  # Install firecrawl skill for web operations
+  echo "  Installing firecrawl skill..."
+  npx skills add -g -y firecrawl/cli 2>/dev/null || echo "  ! Failed to install firecrawl skill"
+
+  # Install rails-skills for Minitest testing
+  echo "  Installing rails-skills..."
+  npx skills add -g -y ThinkOodle/rails-skills 2>/dev/null || echo "  ! Failed to install rails-skills"
+
+  # Install skill-creator for creating Agent Skills
+  echo "  Installing skill-creator..."
+  npx skills add -g -y https://github.com/anthropics/skills --skill skill-creator 2>/dev/null || echo "  ! Failed to install skill-creator"
+
+  echo "  ✓ Skills installation complete"
+}
+
+# Install agent-browser for web automation
+install_agent_browser() {
+  echo ""
+  echo "=== Agent Browser ==="
+
+  # Check if agent-browser is already installed
+  if ! command -v agent-browser &> /dev/null; then
+    echo "  Installing agent-browser..."
+    npm install -g agent-browser 2>/dev/null || echo "  ! Failed to install agent-browser"
+  else
+    echo "  ✓ agent-browser already installed"
+  fi
+
+  # Download Chromium browser
+  echo "  Downloading Chromium for agent-browser..."
+  agent-browser install 2>/dev/null || echo "  ! Failed to download Chromium"
+
+  echo "  ✓ Agent browser setup complete"
 }
 
 # Setup OpenCode
@@ -124,6 +170,8 @@ check_env() {
 
 # Run setup
 install_deps
+install_skills
+install_agent_browser
 setup_opencode
 setup_amp
 check_env

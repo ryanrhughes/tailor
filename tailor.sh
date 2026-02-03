@@ -26,6 +26,16 @@ fi
 mkdir -p ~/.config
 find config -type f ! -path "config/ssh/*" ! -path "config/opencode/*" ! -path "config/amp/*" -exec sh -c 'mkdir -p ~/.config/$(dirname ${1#config/}) && cp "$1" ~/.config/${1#config/}' _ {} \;
 
+# Install custom scripts to ~/.local/bin
+mkdir -p ~/.local/bin
+for script in bin/*; do
+  if [ -f "$script" ]; then
+    cp "$script" ~/.local/bin/
+    chmod +x ~/.local/bin/$(basename "$script")
+    echo "✓ Installed $(basename "$script") to ~/.local/bin/"
+  fi
+done
+
 # Setup AI coding tools (OpenCode, Amp)
 if [ -f ./setup-ai.sh ]; then
   ./setup-ai.sh

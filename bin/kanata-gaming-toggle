@@ -1,0 +1,10 @@
+#!/bin/bash
+# Toggle kanata homerow mods for gaming mode
+
+if systemctl --user is-active --quiet kanata.service; then
+    systemctl --user stop kanata.service
+    notify-send -u normal "Gaming Mode" "Homerow mods DISABLED" -i input-gaming
+else
+    systemctl --user start kanata.service
+    notify-send -u normal "Gaming Mode" "Homerow mods ENABLED" -i input-keyboard
+fi
