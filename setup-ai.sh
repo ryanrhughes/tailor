@@ -1,5 +1,5 @@
 #!/bin/bash
-# Setup AI coding tools (OpenCode, Amp)
+# Setup AI coding tools (OpenCode)
 # This script is idempotent - safe to run multiple times
 
 set -e
@@ -12,15 +12,6 @@ echo "Setting up AI coding tools..."
 install_deps() {
   echo ""
   echo "=== Dependencies ==="
-
-  # Install beads MCP server
-  if ! command -v beads-mcp &> /dev/null; then
-    echo "  Installing beads-git..."
-    yay -S --noconfirm beads-git
-    echo "  ✓ Installed beads-git"
-  else
-    echo "  ✓ beads-mcp already installed"
-  fi
 
   # Install figma-developer-mcp locally
   # Note: Uses --ignore-scripts to bypass sharp's broken install check on Node 25+
@@ -114,35 +105,6 @@ setup_opencode() {
   fi
 }
 
-# Setup Amp
-setup_amp() {
-  echo ""
-  echo "=== Amp ==="
-  
-  local config_dir="$HOME/.config/amp"
-  local source_file="$SCRIPT_DIR/config/amp/settings.json"
-  local target_file="$config_dir/settings.json"
-  
-  if [ ! -f "$source_file" ]; then
-    echo "  ! Source config not found: $source_file"
-    return 1
-  fi
-  
-  mkdir -p "$config_dir"
-  
-  # For Amp, we merge with existing settings to preserve user-specific data
-  # like guardedFiles.allowlist entries and mcpTrustedServers
-  if [ -f "$target_file" ] && command -v jq &> /dev/null; then
-    # Merge: source values override target, but preserve target keys not in source
-    jq -s '.[0] * .[1]' "$target_file" "$source_file" > "$target_file.tmp"
-    mv "$target_file.tmp" "$target_file"
-    echo "  ✓ Merged settings.json with existing config"
-  else
-    cp "$source_file" "$target_file"
-    echo "  ✓ Copied settings.json to $config_dir"
-  fi
-}
-
 # Check for required environment variables
 check_env() {
   echo ""
@@ -173,13 +135,11 @@ install_deps
 install_skills
 install_agent_browser
 setup_opencode
-setup_amp
 check_env
 
 echo ""
 echo "=== Post-setup ==="
 echo "  For MCP servers requiring OAuth, run:"
 echo "    opencode mcp auth <server-name>"
-echo "    amp mcp oauth login <server-name>"
 echo ""
 echo "Done!"
