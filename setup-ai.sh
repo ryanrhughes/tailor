@@ -75,6 +75,25 @@ install_agent_browser() {
   echo "  ✓ Agent browser setup complete"
 }
 
+# Setup Claude Code settings
+setup_claude_code() {
+  echo ""
+  echo "=== Claude Code ==="
+
+  local settings_file="$HOME/.claude/settings.json"
+  mkdir -p "$HOME/.claude"
+
+  if [ ! -f "$settings_file" ]; then
+    echo '{}' > "$settings_file"
+  fi
+
+  # Disable co-authored-by attribution on commits and PRs
+  local updated
+  updated=$(jq '.attribution = { commit: "", pr: "" }' "$settings_file")
+  echo "$updated" > "$settings_file"
+  echo "  ✓ Claude Code settings configured"
+}
+
 # Setup OpenCode
 setup_opencode() {
   echo ""
@@ -134,6 +153,7 @@ check_env() {
 install_deps
 install_skills
 install_agent_browser
+setup_claude_code
 setup_opencode
 check_env
 
