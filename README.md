@@ -1,163 +1,81 @@
 # Tailor
 
-Environment setup scripts to quickly replicate your development environment across machines.
+Personal environment provisioning on top of Omarchy. Re-runnable, idempotent, opinionated.
 
-## Quick Start
+Tailor doesn't try to do everything — it builds on what Omarchy already provides (mise, node, claude/codex/pi/etc., AUR helpers) and layers in personal customization: env vars, SSH hosts, AI skills, internal CLI tooling, and per-tool config.
 
-1. **Install prerequisites**:
-   - [1Password CLI](https://developer.1password.com/docs/cli/get-started/) (`op`)
-   - `jq`
+## Quick start
 
-2. **Sign in to 1Password**:
-   ```bash
-   op account add
-   eval $(op signin)
-   ```
-
-3. **Create config files**:
-   ```bash
-   mkdir -p ~/.config/tailor
-   cp ssh-hosts.json.example ~/.config/tailor/ssh-hosts.json
-   cp config/hypr/envs.conf.example ~/.config/tailor/envs.conf
-   # Edit both files with your actual values
-   ```
-
-4. **Run setup**:
+1. Install [1Password CLI](https://developer.1password.com/docs/cli/get-started/) and enable the desktop-app integration (Settings → Developer → "Integrate with 1Password CLI").
+2. Sign in to 1Password (`op vault list` should succeed).
+3. Run:
    ```bash
    ./tailor.sh
    ```
 
-## Configuration
+The pre-flight bails with clear hints if anything's missing. First run on a fresh machine will tell you exactly what 1Password items to create.
 
-### Environment Variables
+## Pipeline
 
-Create `~/.config/tailor/envs.conf` for sensitive URLs and environment variables:
+`tailor.sh` runs these in order. Each is idempotent and can be invoked standalone.
 
-```bash
-env = WEBUI,https://your-webui-url.example.com/
-```
+| Script | What it does |
+|---|---|
+| `setup-preflight.sh` | Verifies Omarchy, mise/node/npm, jq/curl/gh/docker, AI CLIs (claude/codex/pi/gemini/copilot/opencode/playwright-cli/ghui), and 1Password auth. Bails on missing prerequisites. |
+| `setup-envs.sh` | Reads 1P item `tailor-envs` → writes `~/.config/hypr/envs.conf`. |
+| `setup-ssh.sh` | Reads 1P Server items tagged `tailor-ssh` → writes `~/.ssh/config` (managed block with markers; preserves any hand-written entries above/below). Always includes `Host * IdentityAgent ~/.1password/agent.sock`. |
+| `setup-zsh.sh` | Installs `omarchy-zsh` package and runs `omarchy-setup-zsh` (idempotent — detects template signature in `.zshrc`/`.bashrc`). |
+| `setup-pi.sh` | Forces canonical Pi defaults (provider/model/thinking) and installs the canonical extension list. |
+| `setup-ai-skills.sh` | Installs canonical universal skills (firecrawl, rails-skills, skill-creator) via `npx skills add`. Sweeps rejected skills (find-skills, agent-browser). |
+| `setup-cli-tools.sh` | Installs internal CLIs (cortex, nebula, hey, fizzy, basecamp) and runs each one's `skill install` to register the bundled agent skill. |
+| `setup-cli-auth.sh` | For token-based CLIs (cortex/nebula/fizzy): pulls token + config from 1P → writes the CLI's config file. For OAuth CLIs (claude/codex/pi/hey/basecamp): actively verifies auth by exercising the API. Loops with a `gum` prompt to recheck after fixing. |
+| `setup-codexbar.sh` | Installs `codexbar-waybar` (built from `~/Work/codexbar-waybar`); warns if `codexbar-tui` is installed. |
+| `setup-ai.sh` | figma-mcp dependency, Claude Code attribution settings, OpenCode config + slash commands. |
 
-These will be copied to `~/.config/hypr/envs.conf` and sourced by Hyprland. Use them in your bindings:
+## 1Password items used
 
-```bash
-bind = SUPER SHIFT, A, exec, omarchy-launch-webapp "$WEBUI"
-```
+All in `chamberofsecrets.1password.com` by default (override via `TAILOR_OP_ACCOUNT`).
 
-### SSH Hosts File
+| Item | Type | Fields | Used by |
+|---|---|---|---|
+| `tailor-envs` | Secure Note | one text/concealed field per env var (label = name, value = value) | `setup-envs.sh` |
+| `Cortex API` | API Credential | `token`, `tenant_id`, `api_url` | `setup-cli-auth.sh` |
+| `Nebula API` | API Credential | `token`, `workspace`/`workspace_url`/`domain`/`scheme`/`api_url` | `setup-cli-auth.sh` |
+| `Fizzy API` | API Credential | `token`, `account`, `api_url` | `setup-cli-auth.sh` |
+| (any Server item, tagged `tailor-ssh`) | Server | `alias`, `IP`/hostname, `username`, optionally `port` | `setup-ssh.sh` |
 
-Create `~/.config/tailor/ssh-hosts.json` with your server information:
+When `setup-cli-auth.sh` runs and an item is missing, it prints an `op item create` command tailored to your defaults — paste, run, re-run tailor.
 
-```json
-[
-  {
-    "host": "my-server",
-    "uuid": "your-1password-item-uuid",
-    "account": "your-account.1password.com"
-  }
-]
-```
+## OpenCode MCP servers
 
-Get UUIDs from 1Password: click item → copy UUID, or run `op item list`.
+In `config/opencode/opencode.jsonc`:
 
-### 1Password Items
+| Server | Default | Why |
+|---|---|---|
+| `chrome-devtools` | **disabled** | Heavy local-process MCP — large tool catalog loads into context every turn. Toggle on per-session/project. |
+| `figma` | **disabled** | Same reason. Requires `FIGMA_API_KEY`. |
+| `context7` | enabled | Lightweight remote (docs search). |
+| `gh_grep` | enabled | Lightweight remote (GitHub code search). |
 
-Each server needs a 1Password item with these fields:
-- **hostname** (or `ip`, `host`, `server`, `address`) - server IP/hostname
-- **username** (or `user`) - SSH username  
-- **port** (optional, defaults to 22)
+Toggle by editing `enabled` in the jsonc, or use a project-local `opencode.jsonc` override.
 
-Field matching is case-insensitive. SSH keys are managed by 1Password SSH agent.
+## Custom commands (OpenCode)
 
-### Advanced Options
+Installed to `~/.config/opencode/command/`:
 
-Add SSH config options per host:
+- `/create-prd` — generate a PRD from a feature description
+- `/generate-tasks` — generate a task list from requirements/PRD
 
-```json
-{
-  "host": "prod",
-  "uuid": "item-uuid",
-  "account": "your-account.1password.com",
-  "options": {
-    "ForwardAgent": "yes",
-    "ServerAliveInterval": 60
-  }
-}
-```
+## Environment variables
 
-## What Gets Configured
+- `TAILOR_OP_ACCOUNT` — 1Password account hosting tailor's items. Default: `chamberofsecrets.1password.com`.
 
-- Hyprland config files
-- SSH config from 1Password credentials
-- Monitor settings for 4K displays
-- Mailcatcher Docker container
-- AI coding tools (OpenCode, Amp) with MCP servers
+## What's intentionally NOT in tailor
 
-## AI Coding Tools
+Per the "tailor builds on Omarchy baseline" principle, these belong upstream:
 
-Tailor configures [OpenCode](https://opencode.ai) and [Amp](https://ampcode.com) with shared MCP servers.
+- Installing AI CLIs (claude, codex, pi, gemini, copilot, opencode, playwright-cli, ghui) — Omarchy does this via `omarchy-npx-install` and `omarchy-base.packages`.
+- Installing system utilities (jq, curl, gh, docker, mise) — Omarchy.
+- Configuring node via mise — Omarchy.
 
-### Configured MCP Servers
-
-| Server | Type | Description |
-|--------|------|-------------|
-| figma | local | Figma design integration (requires `FIGMA_API_KEY`) |
-| chrome-devtools | local | Browser DevTools control |
-| beads | local | Beads MCP |
-| context7 | remote | Documentation search |
-| gh_grep | remote | GitHub code search |
-| agent-browser | global | Web automation and browser control ([Vercel Labs](https://github.com/vercel-labs/agent-browser)) |
-
-### Adding/Removing MCP Servers
-
-Edit the config files directly:
-- `config/opencode/opencode.jsonc` - OpenCode configuration
-- `config/amp/settings.json` - Amp configuration
-
-Then run `./tailor.sh` or `./setup-ai.sh` to apply changes.
-
-### Disabling a Server
-
-**OpenCode**: Set `"enabled": false` on the server entry.
-
-**Amp**: Remove the server from `amp.mcpServers` or comment it out.
-
-### Environment Variables
-
-Some MCP servers require API keys. Add them to your shell profile:
-
-```bash
-export FIGMA_API_KEY="your-api-key"
-```
-
-### OAuth Servers
-
-For MCP servers requiring OAuth authentication:
-
-```bash
-# OpenCode
-opencode mcp auth sentry
-
-# Amp
-amp mcp oauth login sentry
-```
-
-### Custom Commands (OpenCode)
-
-Custom commands are installed to `~/.config/opencode/command/`:
-
-| Command | Description |
-|---------|-------------|
-| `/create-prd` | Generate a Product Requirements Document from a feature description |
-| `/generate-tasks` | Generate a task list from requirements or PRD |
-
-Usage:
-```
-/create-prd Add a dark mode toggle to the settings page
-/generate-tasks @tasks/prd-dark-mode.md
-```
-
-## Security
-
-- `ssh-hosts.json` and `envs.conf` live in `~/.config/tailor/` (not in the repo)
-- Consider storing your configs as 1Password documents for backup
-- Generated files in `~/.config/hypr/` are git-ignored
+If a fresh-machine tailor run fails the preflight on one of these, the fix is to file an Omarchy issue / re-run Omarchy install — not to add install logic here.

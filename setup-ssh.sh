@@ -1,145 +1,155 @@
 #!/bin/bash
+# Generate ~/.ssh/config from 1Password Server items tagged "tailor-ssh".
+#
+# Source: 1P Server-category items in $TAILOR_OP_ACCOUNT with tag "tailor-ssh".
+# Each item should have:
+#   - tag: "tailor-ssh"
+#   - field "alias" (or "host_alias" / "ssh_alias"): SSH Host alias
+#     (falls back to a slugified item title)
+#   - field for hostname: matched against (ip|host|hostname|server|address)
+#   - field for username: matched against (user|username)
+#   - field for port (optional, default 22): "port"
+#
+# Adding a new host: in 1P, create/find the Server item, add tag "tailor-ssh"
+# and an "alias" field. Re-run tailor.
+#
+# The generated block in ~/.ssh/config is delimited by markers — re-runs replace
+# only that block, leaving any hand-written config above/below intact.
 
-# SSH Config Setup - Generate SSH config from 1Password
-# Can be run standalone or called from tailor.sh
+set -euo pipefail
 
-setup_ssh_config() {
-  # Check if 1Password CLI is installed
-  if ! command -v op &> /dev/null; then
-    echo "⚠ 1Password CLI (op) not found. Skipping SSH config setup."
-    echo "  Install with: https://developer.1password.com/docs/cli/get-started/"
-    return
-  fi
-  
-  # Use XDG config directory for ssh-hosts.json
-  CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/tailor"
-  SSH_HOSTS_FILE="$CONFIG_DIR/ssh-hosts.json"
-  
-  # Check if ssh-hosts.json exists in config directory
-  if [ ! -f "$SSH_HOSTS_FILE" ]; then
-    echo "ℹ ssh-hosts.json not found at $SSH_HOSTS_FILE"
-    echo "  Create your config file:"
-    echo "    mkdir -p $CONFIG_DIR"
-    echo "    cp ssh-hosts.json.example $SSH_HOSTS_FILE"
-    echo "  Or fetch from 1Password:"
-    echo "    op document get 'tailor-ssh-hosts' > $SSH_HOSTS_FILE"
-    return
-  fi
-  
-  # Check if jq is installed
-  if ! command -v jq &> /dev/null; then
-    echo "⚠ jq not found. Install it to use 1Password SSH config generation."
-    return
-  fi
-  
-  echo "🔐 Generating SSH config from 1Password..."
-  
-  mkdir -p ~/.ssh
-  mkdir -p config/ssh
-  
-  # Backup existing SSH config if it exists
-  if [ -f ~/.ssh/config ]; then
-    cp ~/.ssh/config ~/.ssh/config.backup.$(date +%Y%m%d_%H%M%S)
-  fi
-  
-  # Generate SSH config from 1Password
-  > config/ssh/config  # Clear the file
-  
-  # Read each host from ssh-hosts.json
-  jq -c '.[]' "$SSH_HOSTS_FILE" | while read -r host_config; do
-    host=$(echo "$host_config" | jq -r '.host')
-    uuid=$(echo "$host_config" | jq -r '.uuid')
-    account=$(echo "$host_config" | jq -r '.account // empty')
-    
-    # Check if host already exists in SSH config
-    if [ -f ~/.ssh/config ] && grep -q "^Host $host$" ~/.ssh/config; then
-      echo "  ✓ Host $host already exists in SSH config, skipping"
-      continue
+TAILOR_OP_ACCOUNT="${TAILOR_OP_ACCOUNT:-chamberofsecrets.1password.com}"
+TAG="tailor-ssh"
+MARKER_START="# --- BEGIN tailor SSH (generated from 1Password) ---"
+MARKER_END="# --- END tailor SSH ---"
+
+mkdir -p ~/.ssh
+
+# Backup
+[ -f ~/.ssh/config ] && cp ~/.ssh/config ~/.ssh/config.backup."$(date +%Y%m%d_%H%M%S)"
+
+echo "  Querying $TAILOR_OP_ACCOUNT for Server items tagged '$TAG'..."
+
+if ! items=$(op item list \
+    --categories Server \
+    --tags "$TAG" \
+    --account "$TAILOR_OP_ACCOUNT" \
+    --format json 2>/dev/null); then
+  echo "  ✗ Failed to query 1Password account $TAILOR_OP_ACCOUNT"
+  exit 1
+fi
+
+# Always include the 1Password SSH agent in Host * — required for the
+# 1Password integration to work for any host.
+block=$'\nHost *\n    IdentityAgent ~/.1password/agent.sock\n'
+
+count=$(echo "$items" | jq 'length')
+if [ "$count" -eq 0 ]; then
+  echo "  ℹ No Server items tagged '$TAG' in $TAILOR_OP_ACCOUNT"
+else
+  echo "  Found $count host(s) — fetching details..."
+  while read -r summary; do
+    uuid=$(echo "$summary" | jq -r '.id')
+    full=$(op item get "$uuid" --account "$TAILOR_OP_ACCOUNT" --format json)
+
+    title=$(echo "$full" | jq -r '.title')
+    alias=$(echo "$full" | jq -r '
+      ([.fields[] | select(.label | ascii_downcase | test("^(alias|host_alias|ssh_alias)$")) | .value] | map(select(. != null and . != "")) | first)
+      // empty
+    ')
+    if [ -z "$alias" ]; then
+      alias=$(echo "$title" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
     fi
-    
-    if [ -z "$account" ]; then
-      echo "  ⚠ No account specified for $host, skipping"
-      continue
-    fi
-    
-    echo "  Fetching credentials for $host from $account..."
-    
-    # Get the full item as JSON from 1Password
-    item_json=$(op item get "$uuid" --format json --account "$account" 2>/dev/null)
-    
-    if [ -z "$item_json" ]; then
-      echo "  ⚠ Failed to fetch 1Password item with UUID '$uuid'"
-      continue
-    fi
-    
-    # Extract fields dynamically - try common field names
-    hostname=$(echo "$item_json" | jq -r '
-      .fields[] | 
-      select(.label | ascii_downcase | test("^(ip|host|hostname|server|address)$")) | 
-      .value // empty
-    ' | head -n1)
-    
-    username=$(echo "$item_json" | jq -r '
-      .fields[] | 
-      select(.label | ascii_downcase | test("^(user|username)$")) | 
-      .value // empty
-    ' | head -n1)
-    
-    port=$(echo "$item_json" | jq -r '
-      .fields[] | 
-      select(.label | ascii_downcase | test("^port$")) | 
-      .value // empty
-    ' | head -n1)
-    
-    # Apply defaults
+
+    hostname=$(echo "$full" | jq -r '
+      [.fields[] | select(.label | ascii_downcase | test("^(ip|host|hostname|server|address)$")) | .value] | map(select(. != null and . != "")) | first // empty
+    ')
+    username=$(echo "$full" | jq -r '
+      [.fields[] | select(.label | ascii_downcase | test("^(user|username)$")) | .value] | map(select(. != null and . != "")) | first // empty
+    ')
+    port=$(echo "$full" | jq -r '
+      [.fields[] | select(.label | ascii_downcase | test("^port$")) | .value] | map(select(. != null and . != "")) | first // empty
+    ')
     [ -z "$port" ] && port=22
-    
-    # Check for required fields
-    if [ -z "$hostname" ]; then
-      echo "  ⚠ No IP/hostname field found for $host (looked for: ip, host, hostname, server, address)"
-      continue
-    fi
-    
-    if [ -z "$username" ]; then
-      echo "  ⚠ No username field found for $host (looked for: user, username)"
-      continue
-    fi
-    
-    # Write SSH config entry
-    {
-      echo ""
-      echo "Host $host"
-      echo "    HostName $hostname"
-      echo "    User $username"
-      echo "    Port $port"
-      
-      # Add any override options from ssh-hosts.json
-      echo "$host_config" | jq -r '.options // {} | to_entries[] | "    \(.key) \(.value)"'
-    } >> config/ssh/config
-    
-    echo "  ✓ Added $host ($username@$hostname:$port)"
-  done
-  
-  if [ -s config/ssh/config ]; then
-    # Append or create SSH config in home directory
-    if [ -f ~/.ssh/config ]; then
-      echo "" >> ~/.ssh/config
-      echo "# --- Tailor SSH Config (Generated from 1Password) ---" >> ~/.ssh/config
-      cat config/ssh/config >> ~/.ssh/config
-    else
-      cp config/ssh/config ~/.ssh/config
-    fi
-    
-    # Set proper permissions
-    chmod 600 ~/.ssh/config
-    chmod 600 config/ssh/config 2>/dev/null || true
-    echo "✓ SSH config updated from 1Password"
-    echo ""
-    echo "Generated config:"
-    cat config/ssh/config
-  else
-    echo "⚠ No SSH config entries were generated"
-  fi
-}
 
-setup_ssh_config
+    if [ -z "$hostname" ] || [ -z "$username" ]; then
+      echo "    ⚠ Skipping '$title' — missing hostname or username field"
+      continue
+    fi
+
+    block+=$'\n'
+    block+="Host $alias"$'\n'
+    block+="    HostName $hostname"$'\n'
+    block+="    User $username"$'\n'
+    block+="    Port $port"$'\n'
+
+    echo "    ✓ $alias ($username@$hostname:$port)"
+  done < <(echo "$items" | jq -c '.[]')
+fi
+
+# Strip any existing tailor block (both old single-marker style and current
+# BEGIN/END style). Also strip a redundant standalone "Host *" block whose
+# only directive is `IdentityAgent ~/.1password/agent.sock` — that line is
+# now part of the managed block, so a freestanding copy is duplication.
+# A "Host *" block with any other directives is left alone (real user config).
+if [ -f ~/.ssh/config ]; then
+  awk -v s="$MARKER_START" -v e="$MARKER_END" '
+    function finalize() {
+      if (collecting_host_star) {
+        if (!saw_only_identity_agent)
+          for (i = 1; i <= buf_n; i++) print buf[i]
+        buf_n = 0
+        collecting_host_star = 0
+        saw_only_identity_agent = 1
+      }
+    }
+    BEGIN { saw_only_identity_agent = 1 }
+
+    $0 == "# --- Tailor SSH Config (Generated from 1Password) ---" {
+      finalize(); in_old=1; next
+    }
+    $0 == s { finalize(); in_old=0; in_new=1; next }
+    $0 == e { in_new=0; next }
+    in_old || in_new { next }
+
+    /^Host \*[[:space:]]*$/ {
+      finalize()
+      collecting_host_star = 1
+      saw_only_identity_agent = 1
+      buf_n = 1; buf[1] = $0
+      next
+    }
+
+    /^Host[[:space:]]+/ {
+      finalize()
+      print; next
+    }
+
+    collecting_host_star {
+      buf_n++; buf[buf_n] = $0
+      if ($0 ~ /^[[:space:]]+IdentityAgent[[:space:]]+~\/\.1password\/agent\.sock[[:space:]]*$/) next
+      if ($0 ~ /^[[:space:]]*$/) next
+      saw_only_identity_agent = 0
+      next
+    }
+
+    { print }
+
+    END { finalize() }
+  ' ~/.ssh/config > ~/.ssh/config.tmp
+else
+  : > ~/.ssh/config.tmp
+fi
+
+{
+  cat ~/.ssh/config.tmp
+  echo ""
+  echo "$MARKER_START"
+  echo "$block"
+  echo "$MARKER_END"
+} > ~/.ssh/config
+
+rm -f ~/.ssh/config.tmp
+chmod 600 ~/.ssh/config
+
+echo "  ✓ SSH config updated"

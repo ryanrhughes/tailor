@@ -29,52 +29,6 @@ install_deps() {
   fi
 }
 
-# Install AI skills
-install_skills() {
-  echo ""
-  echo "=== AI Skills ==="
-
-  # Check if skills CLI is available
-  if ! command -v npx &> /dev/null; then
-    echo "  ! npx not found, skipping skill installation"
-    return 1
-  fi
-
-  # Install firecrawl skill for web operations
-  echo "  Installing firecrawl skill..."
-  npx skills add -g -y firecrawl/cli 2>/dev/null || echo "  ! Failed to install firecrawl skill"
-
-  # Install rails-skills for Minitest testing
-  echo "  Installing rails-skills..."
-  npx skills add -g -y ThinkOodle/rails-skills 2>/dev/null || echo "  ! Failed to install rails-skills"
-
-  # Install skill-creator for creating Agent Skills
-  echo "  Installing skill-creator..."
-  npx skills add -g -y https://github.com/anthropics/skills --skill skill-creator 2>/dev/null || echo "  ! Failed to install skill-creator"
-
-  echo "  ✓ Skills installation complete"
-}
-
-# Install agent-browser for web automation
-install_agent_browser() {
-  echo ""
-  echo "=== Agent Browser ==="
-
-  # Check if agent-browser is already installed
-  if ! command -v agent-browser &> /dev/null; then
-    echo "  Installing agent-browser..."
-    npm install -g agent-browser 2>/dev/null || echo "  ! Failed to install agent-browser"
-  else
-    echo "  ✓ agent-browser already installed"
-  fi
-
-  # Download Chromium browser
-  echo "  Downloading Chromium for agent-browser..."
-  agent-browser install 2>/dev/null || echo "  ! Failed to download Chromium"
-
-  echo "  ✓ Agent browser setup complete"
-}
-
 # Setup Claude Code settings
 setup_claude_code() {
   echo ""
@@ -149,17 +103,11 @@ check_env() {
   fi
 }
 
-# Run setup
+# Run setup (skills moved to setup-ai-skills.sh)
 install_deps
-install_skills
-install_agent_browser
 setup_claude_code
 setup_opencode
 check_env
 
-echo ""
-echo "=== Post-setup ==="
-echo "  For MCP servers requiring OAuth, run:"
-echo "    opencode mcp auth <server-name>"
 echo ""
 echo "Done!"

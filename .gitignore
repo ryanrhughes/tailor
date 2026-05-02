@@ -1,8 +1,3 @@
-# Sensitive SSH configuration
-config/ssh/config
-
-# User's personal SSH hosts configuration (lives in ~/.config/tailor/)
-ssh-hosts.json
-
-# User's personal environment variables (lives in ~/.config/tailor/)
-config/hypr/envs.conf
+# Editor / IDE
+*.swp
+.DS_Store

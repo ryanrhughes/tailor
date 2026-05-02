@@ -2,19 +2,23 @@
   "$schema": "https://opencode.ai/config.json",
   "plugin": ["@franlol/opencode-md-table-formatter@0.0.3"],
   "mcp": {
+    // Heavy local-process MCPs default to disabled — they load their full tool
+    // catalog into the agent's context every turn. Toggle on per-session via
+    // `"enabled": true` (or use a project-local opencode.jsonc override).
     "figma": {
       "type": "local",
       "command": ["node", "/home/ryan/.local/share/figma-mcp/node_modules/figma-developer-mcp/dist/bin.js", "--stdio"],
       "environment": {
         "FIGMA_API_KEY": "{env:FIGMA_API_KEY}"
       },
-      "enabled": true
+      "enabled": false
     },
     "chrome-devtools": {
       "type": "local",
       "command": ["npx", "chrome-devtools-mcp@latest", "--isolated=true", "--channel=canary", "--headless=true"],
-      "enabled": true
+      "enabled": false
     },
+    // Lightweight remote MCPs stay on — tiny tool surface, useful most of the time.
     "context7": {
       "type": "remote",
       "url": "https://mcp.context7.com/mcp",

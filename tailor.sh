@@ -1,10 +1,21 @@
+#!/bin/bash
+# Tailor — provision personal customizations on top of Omarchy.
+# Idempotent: safe to re-run.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Pre-flight: bail early if any prerequisite is missing.
+"$SCRIPT_DIR/setup-preflight.sh"
+
 mkdir -p ~/Work/
 
 # Clone repos only if they don't already exist
 if [ ! -d ~/Work/omarchy/omarchy-installer ]; then
   gh repo clone basecamp/omarchy ~/Work/omarchy/omarchy-installer
 fi
-
 if [ ! -d ~/Work/omarchy/omarchy-iso ]; then
   gh repo clone omacom-io/omarchy-iso ~/Work/omarchy/omarchy-iso
 fi
@@ -15,12 +26,34 @@ if [ ! -d ~/Work/kanata-homerow-mods ]; then
   gh repo clone ryanrhughes/kanata-homerow-mods ~/Work/kanata-homerow-mods
 fi
 
-docker run -d --name mailcatcher -p 1025:1025 -p 1080:1080 dockage/mailcatcher:0.9.0
-
-# Setup SSH config from 1Password (modular script)
-if [ -f ./setup-ssh.sh ]; then
-  ./setup-ssh.sh
+# Mailcatcher (idempotent — skip if container already exists)
+if ! docker ps -a --format '{{.Names}}' | grep -q '^mailcatcher$'; then
+  docker run -d --name mailcatcher -p 1025:1025 -p 1080:1080 dockage/mailcatcher:0.9.0
 fi
+
+# Generate ~/.config/hypr/envs.conf from 1Password (item: tailor-envs)
+"$SCRIPT_DIR/setup-envs.sh"
+
+# Generate ~/.ssh/config from 1Password (Server items tagged 'tailor-ssh')
+"$SCRIPT_DIR/setup-ssh.sh"
+
+# Set up zsh (omarchy-zsh package + template)
+"$SCRIPT_DIR/setup-zsh.sh"
+
+# Configure Pi (settings + extensions)
+"$SCRIPT_DIR/setup-pi.sh"
+
+# Install/maintain canonical AI skills allowlist
+"$SCRIPT_DIR/setup-ai-skills.sh"
+
+# Install internal CLIs (cortex, nebula, hey, fizzy, basecamp) + bundled skills
+"$SCRIPT_DIR/setup-cli-tools.sh"
+
+# Auth: write token configs from 1P + verify OAuth status for each CLI
+"$SCRIPT_DIR/setup-cli-auth.sh"
+
+# Codexbar (waybar wrapper for Codex/Claude usage)
+"$SCRIPT_DIR/setup-codexbar.sh"
 
 # Copy Hypr config files (excluding ssh, opencode, amp directories - those have their own setup)
 mkdir -p ~/.config
@@ -36,19 +69,8 @@ for script in bin/*; do
   fi
 done
 
-# Setup AI coding tools (OpenCode, Amp)
-if [ -f ./setup-ai.sh ]; then
-  ./setup-ai.sh
-fi
-
-# Copy environment variables from ~/.config/tailor/ to ~/.config/hypr/
-if [ -f ~/.config/tailor/envs.conf ]; then
-  cp ~/.config/tailor/envs.conf ~/.config/hypr/envs.conf
-  echo "✓ Copied envs.conf to Hyprland config"
-else
-  echo "⚠ envs.conf not found at ~/.config/tailor/envs.conf"
-  echo "  Copy config/hypr/envs.conf.example to ~/.config/tailor/envs.conf and edit with your values"
-fi
+# Setup AI coding tools (OpenCode skills, MCP servers, etc.)
+"$SCRIPT_DIR/setup-ai.sh"
 
 # Add source line to hyprland.conf if it doesn't already exist
 if ! grep -q "source = ~/.config/hypr/windows.conf" ~/.config/hypr/hyprland.conf 2>/dev/null; then
@@ -68,16 +90,13 @@ fi
 for dir in Pictures Videos Documents; do
   home_dir=~/"$dir"
   dropbox_dir=~/Dropbox/"$dir"
-  
-  # Only process if Dropbox directory exists
+
   if [ -d "$dropbox_dir" ]; then
-    # If home directory exists and is not a symlink
     if [ -e "$home_dir" ] && [ ! -L "$home_dir" ]; then
       echo "Backing up ~/$dir to ~/${dir}.bak"
       mv "$home_dir" "${home_dir}.bak"
       ln -s "$dropbox_dir" "$home_dir"
       echo "✓ Linked ~/$dir to ~/Dropbox/$dir"
-    # If home directory doesn't exist, create the symlink
     elif [ ! -e "$home_dir" ]; then
       ln -s "$dropbox_dir" "$home_dir"
       echo "✓ Linked ~/$dir to ~/Dropbox/$dir"
@@ -86,5 +105,3 @@ for dir in Pictures Videos Documents; do
     fi
   fi
 done
-
-
