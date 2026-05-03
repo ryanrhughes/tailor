@@ -13,6 +13,9 @@
 #      command if not authed.
 #      CLIs: claude, codex, pi, hey, basecamp.
 #
+#   3. Dropbox — not a CLI, but tailor's symlink step in tailor.sh depends on
+#      ~/Dropbox being a signed-in sync root. Same recheck/skip flow.
+#
 # After all checks: if anything failed, summarize and prompt (via gum) to either
 # re-run the checks (after fixing) or continue anyway. Tailor never blocks on
 # auth — worst case, you get warnings and the rest of the run proceeds.
@@ -181,7 +184,16 @@ verify_codex() {
 
 verify_pi() {
   hdr "pi auth"
-  if timeout 30 pi --print "reply with only the word OK" </dev/null >/dev/null 2>&1; then
+  # pi --print does not exit cleanly even after producing output (it hangs on
+  # TUI cleanup), so `pi --print | check exit code` always hits the timeout and
+  # reports a false negative. Instead we run pi in JSON mode and consider auth
+  # verified the moment the provider emits an assistant message_start event.
+  # `head -c` closes the pipe, killing pi via SIGPIPE; we capture into a var so
+  # pi's 141 exit status doesn't trip the script's pipefail.
+  local out
+  out=$(timeout 20 pi --print --mode json --no-session "ok" </dev/null 2>/dev/null \
+          | head -c 4096 || true)
+  if echo "$out" | grep -q '"type":"message_start","message":{"role":"assistant"'; then
     ok "pi authenticated and reachable (via provider)"
   else
     warn "pi not authenticated or provider unreachable"
@@ -227,6 +239,43 @@ verify_basecamp() {
   return 1
 }
 
+# --- Dropbox: required because tailor.sh symlinks ~/Pictures, ~/Videos,
+# --- ~/Documents into ~/Dropbox/. If Dropbox isn't fully signed in, the
+# --- symlink step is skipped (or worse, points into an empty stub), so we
+# --- gate it here and let the user fix it before tailor proceeds.
+
+verify_dropbox() {
+  hdr "dropbox"
+
+  if ! command -v dropbox >/dev/null 2>&1; then
+    warn "dropbox not installed"
+    hint "Install: sudo pacman -S dropbox  (or: omarchy-pkg-add dropbox)"
+    return 1
+  fi
+
+  if ! pgrep -x dropbox >/dev/null 2>&1; then
+    warn "dropbox daemon not running"
+    hint "Start it: systemctl --user enable --now dropbox  (or launch the Dropbox app)"
+    return 1
+  fi
+
+  # ~/.dropbox/info.json is created on first successful sign-in and lists
+  # the sync roots. Empty/missing means the user hasn't completed setup.
+  if [ ! -s "$HOME/.dropbox/info.json" ]; then
+    warn "dropbox not signed in"
+    hint "Launch Dropbox and sign in, then wait for initial sync to start"
+    return 1
+  fi
+
+  if [ ! -d "$HOME/Dropbox" ]; then
+    warn "~/Dropbox sync folder missing"
+    hint "Open Dropbox preferences and confirm the sync location is ~/Dropbox"
+    return 1
+  fi
+
+  ok "dropbox installed, running, and signed in"
+}
+
 # --- Run all checks; collect failures ---------------------------------
 
 run_all_checks() {
@@ -239,6 +288,7 @@ run_all_checks() {
   verify_pi           || failures+=("pi")
   verify_hey          || failures+=("hey")
   verify_basecamp     || failures+=("basecamp")
+  verify_dropbox      || failures+=("dropbox")
 }
 
 # --- Loop: prompt to recheck after fixing -----------------------------

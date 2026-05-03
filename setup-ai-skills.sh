@@ -33,9 +33,10 @@ fi
 
 # Get currently installed global skills (names only, ANSI-stripped).
 # Output format: indented "  <name> ~/.agents/skills/<name>" under category headers.
-installed=$(npx --no-install skills list -g 2>&1 \
+# Use -y so npx fetches the skills CLI on first run instead of bailing.
+installed=$(npx -y skills list -g 2>&1 \
   | sed 's/\x1b\[[0-9;]*m//g' \
-  | awk '/^[[:space:]]+[A-Za-z][A-Za-z0-9_-]* ~/{print $1}')
+  | awk '/^[[:space:]]+[A-Za-z][A-Za-z0-9_-]* ~/{print $1}' || true)
 
 skill_present() {
   echo "$installed" | grep -qx "$1"
