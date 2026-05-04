@@ -22,6 +22,7 @@ The pre-flight bails with clear hints if anything's missing. First run on a fres
 | Script | What it does |
 |---|---|
 | `setup-preflight.sh` | Verifies Omarchy, mise/node/npm, jq/curl/gh/docker, AI CLIs (claude/codex/pi/gemini/copilot/opencode/playwright-cli/ghui), and 1Password auth. Bails on missing prerequisites. |
+| `setup-cleanup.sh` | Removes stale Tailor-managed artifacts from previous versions, like the old unofficial `figma-developer-mcp` install/config. |
 | `setup-envs.sh` | Reads 1P item `tailor-envs` → writes `~/.config/hypr/envs.conf`. |
 | `setup-ssh.sh` | Reads 1P Server items tagged `tailor-ssh` → writes `~/.ssh/config` (managed block with markers; preserves any hand-written entries above/below). Always includes `Host * IdentityAgent ~/.1password/agent.sock`. |
 | `setup-zsh.sh` | Installs `omarchy-zsh` package and runs `omarchy-setup-zsh` (idempotent — detects template signature in `.zshrc`/`.bashrc`). |
@@ -29,8 +30,8 @@ The pre-flight bails with clear hints if anything's missing. First run on a fres
 | `setup-ai-skills.sh` | Installs canonical universal skills (firecrawl, rails-skills, skill-creator) via `npx skills add`. Sweeps rejected skills (find-skills, agent-browser). |
 | `setup-cli-tools.sh` | Installs internal CLIs (cortex, nebula, hey, fizzy, basecamp) and runs each one's `skill install` to register the bundled agent skill. |
 | `setup-cli-auth.sh` | For token-based CLIs (cortex/nebula/fizzy): pulls token + config from 1P → writes the CLI's config file. For OAuth CLIs (claude/codex/pi/hey/basecamp): actively verifies auth by exercising the API. Loops with a `gum` prompt to recheck after fixing. |
-| `setup-codexbar.sh` | Installs `codexbar-waybar` (built from `~/Work/codexbar-waybar`); warns if `codexbar-tui` is installed. |
-| `setup-ai.sh` | figma-mcp dependency, Claude Code attribution settings, OpenCode config + slash commands. |
+| `setup-codexbar.sh` | Installs `codexbar-waybar` (built from `~/Work/codexbar-waybar`), runs `codexbar-waybar-install`, and warns if `codexbar-tui` is installed. |
+| `setup-ai.sh` | Claude Code attribution settings, OpenCode config + slash commands. |
 
 ## 1Password items used
 
@@ -53,7 +54,7 @@ In `config/opencode/opencode.jsonc`:
 | Server | Default | Why |
 |---|---|---|
 | `chrome-devtools` | **disabled** | Heavy local-process MCP — large tool catalog loads into context every turn. Toggle on per-session/project. |
-| `figma` | **disabled** | Same reason. Requires `FIGMA_API_KEY`. |
+| `figma` | **disabled** | Official remote Figma MCP. Enable per-session/project and authenticate via OAuth when needed. |
 | `context7` | enabled | Lightweight remote (docs search). |
 | `gh_grep` | enabled | Lightweight remote (GitHub code search). |
 

@@ -249,7 +249,7 @@ verify_dropbox() {
 
   if ! command -v dropbox >/dev/null 2>&1; then
     warn "dropbox not installed"
-    hint "Install: sudo pacman -S dropbox  (or: omarchy-pkg-add dropbox)"
+    hint "Install: omarchy install dropbox"
     return 1
   fi
 
