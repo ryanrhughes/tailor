@@ -45,6 +45,22 @@ install_skill_for() {
   fi
 }
 
+# Ensure Go is available for building cortex/nebula. Installed globally via
+# mise since neither repo ships a .mise.toml.
+ensure_go() {
+  if command -v go >/dev/null 2>&1; then
+    return 0
+  fi
+  info "Installing go via mise (global)..."
+  mise use -g go@latest >/dev/null
+  hash -r
+  command -v go >/dev/null 2>&1 || {
+    warn "go still not on PATH after 'mise use -g go@latest' — open a new shell and re-run"
+    return 1
+  }
+  ok "go installed: $(go version)"
+}
+
 # Build-and-link a Go private repo to ~/.local/bin/<cli> via the repo's Makefile.
 make_link_repo() {
   local cli="$1"
@@ -65,6 +81,10 @@ make_link_repo() {
   make -C "$cli_dir" link >/dev/null
   ok "$cli installed: $($cli version 2>&1 | head -1)"
 }
+
+# --- go (needed by cortex + nebula) -------------------------------------
+hdr "go"
+ensure_go
 
 # --- cortex --------------------------------------------------------------
 hdr "cortex"
