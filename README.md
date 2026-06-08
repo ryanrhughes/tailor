@@ -24,7 +24,7 @@ The pre-flight bails with clear hints if anything's missing. First run on a fres
 | `setup-preflight.sh` | Verifies Omarchy, mise/node/npm, jq/curl/gh/docker, AI CLIs (claude/codex/pi/gemini/copilot/opencode/playwright-cli/ghui), and 1Password auth. Bails on missing prerequisites. |
 | `setup-cleanup.sh` | Removes stale Tailor-managed artifacts from previous versions, like the old unofficial `figma-developer-mcp` install/config. |
 | `setup-envs.sh` | Reads 1P item `tailor-envs` → writes `~/.config/hypr/envs.conf`. |
-| `setup-ssh.sh` | Reads 1P Server items tagged `tailor-ssh` → writes `~/.ssh/config` (managed block with markers; preserves any hand-written entries above/below). Always includes `Host * IdentityAgent ~/.1password/agent.sock`. |
+| `setup-ssh.sh` | Reads 1P SSH Key item `Github SSH Key` → writes `~/.ssh/id_ed25519_github` + `.pub`; reads 1P Server items tagged `tailor-ssh` → writes `~/.ssh/config` (managed block with markers; preserves any hand-written entries above/below). Pins `github.com` to the GitHub-named local key; every other host defaults to `Host * IdentityAgent ~/.1password/agent.sock`. |
 | `setup-zsh.sh` | Installs `omarchy-zsh` package and runs `omarchy-setup-zsh` (idempotent — detects template signature in `.zshrc`/`.bashrc`). |
 | `setup-pi.sh` | Forces canonical Pi defaults (provider/model/thinking) and installs the canonical extension list. |
 | `setup-ai-skills.sh` | Installs canonical universal skills (firecrawl, rails-skills, skill-creator) via `npx skills add`. Sweeps rejected skills (find-skills, agent-browser). |
@@ -40,6 +40,7 @@ All in `chamberofsecrets.1password.com` by default (override via `TAILOR_OP_ACCO
 | Item | Type | Fields | Used by |
 |---|---|---|---|
 | `tailor-envs` | Secure Note | one text/concealed field per env var (label = name, value = value) | `setup-envs.sh` |
+| `Github SSH Key` (`dp7wepzy37ou6dirqsc4jmje7i`) | SSH Key | `private_key` plus 1Password SSH key public key/fingerprint attributes | `setup-ssh.sh` |
 | `Cortex API` | API Credential | `token`, `tenant_id`, `api_url` | `setup-cli-auth.sh` |
 | `Nebula API` | API Credential | `token`, `workspace`/`workspace_url`/`domain`/`scheme`/`api_url` | `setup-cli-auth.sh` |
 | `Fizzy API` | API Credential | `token`, `account`, `api_url` | `setup-cli-auth.sh` |
@@ -70,6 +71,8 @@ Installed to `~/.config/opencode/command/`:
 ## Environment variables
 
 - `TAILOR_OP_ACCOUNT` — 1Password account hosting tailor's items. Default: `chamberofsecrets.1password.com`.
+- `TAILOR_GITHUB_SSH_KEY_ITEM_UUID` — 1Password SSH Key item used for the local GitHub key. Default: `dp7wepzy37ou6dirqsc4jmje7i`.
+- `TAILOR_GITHUB_SSH_KEY_PATH` — local path for the GitHub-only SSH private key. Default: `~/.ssh/id_ed25519_github`.
 
 ## What's intentionally NOT in tailor
 

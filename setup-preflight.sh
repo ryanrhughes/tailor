@@ -76,9 +76,10 @@ check "op CLI authenticated (can list vaults)" \
   'op vault list' \
   "Enable 1Password app: Settings > Developer > 'Integrate with 1Password CLI', OR: op account add && eval \$(op signin)"
 
-# Tailor configs (envs + SSH hosts) come from 1Password directly during the
-# main tailor run — envs from a 'tailor-envs' item, SSH hosts from Server
-# items tagged 'tailor-ssh'. No local config files needed.
+# Tailor configs come from 1Password directly during the main tailor run:
+# envs from a 'tailor-envs' item, the GitHub SSH key from the 'Github SSH Key'
+# SSH Key item, and SSH hosts from Server items tagged 'tailor-ssh'. No local
+# config files needed.
 
 echo ""
 if [ "$errors" -gt 0 ]; then
