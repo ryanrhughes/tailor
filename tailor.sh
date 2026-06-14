@@ -143,9 +143,18 @@ fi
 # Codexbar (waybar wrapper for Codex/Claude usage)
 "$SCRIPT_DIR/setup-codexbar.sh"
 
-# Copy Hypr config files (excluding ssh, opencode, amp directories - those have their own setup)
+# Herdr terminal workspace manager config + Omarchy theme sync.
+"$SCRIPT_DIR/setup-herdr.sh"
+
+# Copy remaining ~/.config files (excluding directories that have their own setup scripts)
 mkdir -p ~/.config
-find config -type f ! -path "config/ssh/*" ! -path "config/opencode/*" ! -path "config/amp/*" -exec sh -c 'mkdir -p ~/.config/$(dirname ${1#config/}) && cp "$1" ~/.config/${1#config/}' _ {} \;
+find config -type f \
+  ! -path "config/ssh/*" \
+  ! -path "config/opencode/*" \
+  ! -path "config/amp/*" \
+  ! -path "config/herdr/*" \
+  ! -path "config/omarchy/*" \
+  -exec sh -c 'mkdir -p ~/.config/$(dirname ${1#config/}) && cp "$1" ~/.config/${1#config/}' _ {} \;
 
 # Install custom scripts to ~/.local/bin
 mkdir -p ~/.local/bin

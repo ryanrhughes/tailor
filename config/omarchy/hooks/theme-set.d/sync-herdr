@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+# Sync the generated Omarchy Herdr theme fragment into Herdr's config.
+
+set -euo pipefail
+
+herdr_config="${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}"
+state_theme_dir="$HOME/.local/state/omarchy/current/theme"
+legacy_theme_dir="$HOME/.config/omarchy/current/theme"
+theme_fragment=""
+log_path="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/herdr-sync.log"
+
+find_herdr() {
+  if [[ -n ${HERDR_BIN:-} && -x $HERDR_BIN ]]; then
+    printf '%s\n' "$HERDR_BIN"
+  elif [[ -x $HOME/.local/bin/herdr ]]; then
+    printf '%s\n' "$HOME/.local/bin/herdr"
+  elif command -v herdr >/dev/null 2>&1; then
+    command -v herdr
+  elif [[ -x $HOME/.local/share/mise/installs/herdr/latest/herdr ]]; then
+    printf '%s\n' "$HOME/.local/share/mise/installs/herdr/latest/herdr"
+  else
+    return 1
+  fi
+}
+
+reload_herdr() {
+  local herdr_bin
+
+  mkdir -p "$(dirname "$log_path")"
+
+  if ! herdr_bin=$(find_herdr); then
+    printf '[%s] herdr binary not found; skipped reload\n' "$(date -Is)" >>"$log_path"
+    return 0
+  fi
+
+  if "$herdr_bin" server reload-config >>"$log_path" 2>&1; then
+    printf '[%s] reloaded herdr config via %s\n' "$(date -Is)" "$herdr_bin" >>"$log_path"
+  else
+    printf '[%s] herdr reload failed via %s\n' "$(date -Is)" "$herdr_bin" >>"$log_path"
+  fi
+}
+
+for candidate in "$state_theme_dir/herdr.toml" "$legacy_theme_dir/herdr.toml"; do
+  if [[ -f $candidate ]]; then
+    theme_fragment="$candidate"
+    break
+  fi
+done
+
+[[ -n $theme_fragment ]] || exit 0
+
+mkdir -p "$(dirname "$herdr_config")"
+[[ -f $herdr_config ]] || : >"$herdr_config"
+
+backup="$herdr_config.bak.before-omarchy-herdr"
+if [[ ! -f $backup ]]; then
+  cp -p "$herdr_config" "$backup"
+fi
+
+tmp=$(mktemp)
+python3 - "$herdr_config" "$theme_fragment" >"$tmp" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+fragment_path = Path(sys.argv[2])
+
+BEGIN = "# BEGIN OMARCHY HERDR THEME\n"
+END = "# END OMARCHY HERDR THEME\n"
+
+config = config_path.read_text() if config_path.exists() else ""
+fragment = fragment_path.read_text().strip() + "\n"
+managed_block = BEGIN + "# Managed by ~/.config/omarchy/hooks/theme-set.d/sync-herdr.\n" + fragment + END
+
+section_re = re.compile(r"^\s*\[([A-Za-z0-9_.-]+)\]\s*(?:#.*)?$")
+any_section_re = re.compile(r"^\s*\[\[?.*\]?\]\s*(?:#.*)?$")
+
+accent_match = re.search(r'^\s*accent\s*=\s*("[^"]+"|\'[^\']+\'|[^\s#]+)', fragment, re.M)
+accent_value = accent_match.group(1) if accent_match else None
+
+
+def table_name(line: str):
+    match = section_re.match(line)
+    return match.group(1) if match else None
+
+
+def remove_existing_theme_sections(text: str) -> str:
+    lines = text.splitlines(keepends=True)
+    kept = []
+    skip = False
+
+    for line in lines:
+        name = table_name(line)
+        if name is not None:
+            skip = name in {"theme", "theme.custom"}
+            if skip:
+                continue
+        elif any_section_re.match(line):
+            skip = False
+
+        if not skip:
+            kept.append(line)
+
+    return "".join(kept)
+
+
+def replace_managed_block(text: str) -> str | None:
+    start = text.find(BEGIN)
+    if start == -1:
+        return None
+
+    end = text.find(END, start)
+    if end == -1:
+        return None
+
+    end += len(END)
+    return text[:start].rstrip() + "\n\n" + managed_block + "\n" + text[end:].lstrip("\n")
+
+
+def insert_theme_block(text: str) -> str:
+    cleaned = remove_existing_theme_sections(text)
+    lines = cleaned.splitlines(keepends=True)
+
+    insert_at = len(lines)
+    for index, line in enumerate(lines):
+        if any_section_re.match(line):
+            insert_at = index
+            break
+
+    prefix = "".join(lines[:insert_at]).rstrip()
+    suffix = "".join(lines[insert_at:]).lstrip("\n")
+
+    output = ""
+    if prefix:
+        output += prefix + "\n\n"
+    output += managed_block
+    if suffix:
+        output += "\n" + suffix
+
+    return output
+
+
+def upsert_ui_accent(text: str, value: str | None) -> str:
+    if value is None:
+        return text
+
+    lines = text.splitlines(keepends=True)
+    output = []
+    in_ui = False
+    saw_ui = False
+    set_accent = False
+
+    for line in lines:
+        name = table_name(line)
+        if name is not None or any_section_re.match(line):
+            if in_ui and not set_accent:
+                output.append(f"accent = {value}\n")
+                set_accent = True
+            in_ui = name == "ui"
+            if in_ui:
+                saw_ui = True
+        if in_ui and re.match(r"^\s*accent\s*=", line):
+            if not set_accent:
+                output.append(f"accent = {value}\n")
+                set_accent = True
+            continue
+        output.append(line)
+
+    if in_ui and not set_accent:
+        output.append(f"accent = {value}\n")
+    elif not saw_ui:
+        if output and not output[-1].endswith("\n"):
+            output[-1] += "\n"
+        if output and output[-1].strip():
+            output.append("\n")
+        output.append("[ui]\n")
+        output.append(f"accent = {value}\n")
+
+    return "".join(output)
+
+
+updated = replace_managed_block(config)
+if updated is None:
+    updated = insert_theme_block(config)
+
+updated = upsert_ui_accent(updated, accent_value)
+
+if updated and not updated.endswith("\n"):
+    updated += "\n"
+
+print(updated, end="")
+PY
+
+if ! cmp -s "$tmp" "$herdr_config"; then
+  mv "$tmp" "$herdr_config"
+else
+  rm "$tmp"
+fi
+
+# Reload even if the file did not change: a prior hook run may have updated the
+# config but failed to reach Herdr because Omarchy-launched hooks can have a
+# minimal PATH that does not include ~/.local/bin.
+reload_herdr

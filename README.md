@@ -31,6 +31,7 @@ The pre-flight bails with clear hints if anything's missing. First run on a fres
 | `setup-cli-tools.sh` | Installs internal CLIs (cortex, nebula, hey, fizzy, basecamp) and runs each one's `skill install` to register the bundled agent skill. |
 | `setup-cli-auth.sh` | For token-based CLIs (cortex/nebula/fizzy): pulls token + config from 1P → writes the CLI's config file. For OAuth CLIs (claude/codex/pi/hey/basecamp): actively verifies auth by exercising the API. Loops with a `gum` prompt to recheck after fixing. |
 | `setup-codexbar.sh` | Installs `codexbar-waybar` (built from `~/Work/codexbar-waybar`), runs `codexbar-waybar-install`, and warns if `codexbar-tui` is installed. |
+| `setup-herdr.sh` | Installs the canonical Herdr config and Omarchy theme integration (`herdr.toml.tpl` + `theme-set.d/sync-herdr`) so Herdr follows the active Omarchy palette. |
 | `setup-ai.sh` | Claude Code attribution settings, OpenCode config + slash commands. |
 
 ## 1Password items used

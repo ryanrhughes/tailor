@@ -1,0 +1,86 @@
+# herdr configuration
+# Managed by Tailor. Omarchy theme colors are injected by setup-herdr.sh via
+# ~/.config/omarchy/hooks/theme-set.d/sync-herdr.
+
+onboarding = false
+
+[terminal]
+# Match tmux's `-c "#{pane_current_path}"` behavior for new panes/tabs.
+new_cwd = "follow"
+
+[keys]
+# Tmux prefix: C-Space. Herdr currently supports one prefix, so C-b remains literal.
+prefix = "ctrl+space"
+
+# Reload/help
+reload_config = "prefix+q"
+help = "prefix+?"
+detach = "prefix+d"
+
+# Pane controls: tmux `h` => split down (`split-window -v`), `v` => split right (`split-window -h`).
+split_vertical = "prefix+h"
+split_horizontal = "prefix+v"
+close_pane = "prefix+x"
+zoom = "prefix+z"
+resize_mode = "prefix+alt+r"
+
+# Direct pane navigation from tmux.
+focus_pane_left = "ctrl+alt+left"
+focus_pane_right = "ctrl+alt+right"
+focus_pane_up = "ctrl+alt+up"
+focus_pane_down = "ctrl+alt+down"
+
+# Tabs are Herdr's tmux-window equivalent.
+new_tab = "prefix+c"
+rename_tab = "prefix+r"
+close_tab = "prefix+k"
+switch_tab = "alt+1..9"
+previous_tab = "alt+left"
+next_tab = "alt+right"
+
+# Workspaces are Herdr's tmux-session equivalent.
+new_workspace = "prefix+shift+c"
+rename_workspace = "prefix+shift+r"
+close_workspace = "prefix+shift+k"
+previous_workspace = "alt+up"
+next_workspace = "alt+down"
+
+# Keep useful Herdr defaults available on non-conflicting keys.
+settings = "prefix+s"
+workspace_picker = "prefix+w"
+goto = "prefix+g"
+new_worktree = "prefix+shift+g"
+rename_pane = "prefix+shift+p"
+edit_scrollback = "prefix+e"
+toggle_sidebar = "prefix+b"
+cycle_pane_next = "prefix+tab"
+cycle_pane_previous = "prefix+shift+tab"
+
+# Extra tmux-style direct pane shortcuts. Built-in actions only support one key,
+# so these shell bindings add the Alt shortcuts from tmux.conf.
+[[keys.command]]
+key = "alt+enter"
+type = "shell"
+command = "herdr pane split \"$HERDR_PANE_ID\" --direction down --focus"
+
+[[keys.command]]
+key = "alt+shift+enter"
+type = "shell"
+command = "herdr pane split \"$HERDR_PANE_ID\" --direction right --focus"
+
+[[keys.command]]
+key = "alt+esc"
+type = "shell"
+command = "herdr pane close \"$HERDR_PANE_ID\""
+
+[ui]
+# Match tmux's always-on mouse and immediate window creation/kill behavior.
+mouse_capture = true
+prompt_new_tab_name = false
+confirm_close = false
+accent = "cyan"
+agent_panel_scope = "all"
+
+[advanced]
+# Roughly mirror tmux's large history limit.
+scrollback_limit_bytes = 50000000
