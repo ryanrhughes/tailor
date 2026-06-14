@@ -17,9 +17,10 @@ reload_config = "prefix+q"
 help = "prefix+?"
 detach = "prefix+d"
 
-# Pane controls: tmux `h` => split down (`split-window -v`), `v` => split right (`split-window -h`).
-split_vertical = "prefix+h"
-split_horizontal = "prefix+v"
+# Pane controls: tmux `h` => horizontal/top-bottom split (`split-window -v`),
+# `v` => vertical/side-by-side split (`split-window -h`).
+split_horizontal = "prefix+h"
+split_vertical = "prefix+v"
 close_pane = "prefix+x"
 zoom = "prefix+z"
 resize_mode = "prefix+alt+r"
@@ -41,7 +42,10 @@ next_tab = "alt+right"
 # Workspaces are Herdr's tmux-session equivalent.
 new_workspace = "prefix+shift+c"
 rename_workspace = "prefix+shift+r"
+# Keep tmux-style kill-session on K; explicitly unbind Herdr's default swap-pane-up
+# from this chord to avoid keybind diagnostics.
 close_workspace = "prefix+shift+k"
+swap_pane_up = ""
 previous_workspace = "alt+up"
 next_workspace = "alt+down"
 

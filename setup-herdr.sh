@@ -21,6 +21,18 @@ THEME_TEMPLATE_TARGET="$HOME/.config/omarchy/themed/herdr.toml.tpl"
 HOOK_SOURCE="$SCRIPT_DIR/config/omarchy/hooks/theme-set.d/sync-herdr"
 HOOK_TARGET="$HOME/.config/omarchy/hooks/theme-set.d/sync-herdr"
 
+HERDR_HELPER_SCRIPTS=(
+  herdr-dev
+  herdr-tds
+  herdr-tdlm
+  herdr-tsl
+)
+
+SHELL_ALIAS_TARGETS=(
+  "$HOME/.zshrc"
+  "$HOME/.bashrc"
+)
+
 CURRENT_THEME_FRAGMENTS=(
   "$HOME/.local/state/omarchy/current/theme/herdr.toml"
   "$HOME/.config/omarchy/current/theme/herdr.toml"
@@ -43,6 +55,56 @@ backup_existing_config_once() {
     cp -p "$HERDR_CONFIG_TARGET" "$HERDR_CONFIG_BACKUP"
     ok "Backed up existing Herdr config to $HERDR_CONFIG_BACKUP"
   fi
+}
+
+install_herdr_helpers() {
+  local script
+
+  mkdir -p "$HOME/.local/bin"
+  for script in "${HERDR_HELPER_SCRIPTS[@]}"; do
+    copy_file 0755 "$SCRIPT_DIR/bin/$script" "$HOME/.local/bin/$script"
+    ok "Installed $script to ~/.local/bin/$script"
+  done
+}
+
+install_shell_aliases() {
+  local rc
+
+  for rc in "${SHELL_ALIAS_TARGETS[@]}"; do
+    mkdir -p "$(dirname "$rc")"
+    touch "$rc"
+
+    python3 - "$rc" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+begin = "# BEGIN TAILOR HERDR ALIASES\n"
+end = "# END TAILOR HERDR ALIASES\n"
+block = begin + """# Local Herdr workspace layout helpers managed by Tailor.
+alias hdl='herdr-dev'
+alias hic='herdr-dev'
+alias hix='herdr-dev cx'
+alias hicx='herdr-dev cx codex'
+alias hds='herdr-tds'
+alias hdlm='herdr-tdlm'
+alias hsl='herdr-tsl'
+""" + end
+
+text = path.read_text() if path.exists() else ""
+if begin in text and end in text:
+    start = text.index(begin)
+    stop = text.index(end, start) + len(end)
+    text = text[:start] + block + text[stop:]
+else:
+    if text and not text.endswith("\n"):
+        text += "\n"
+    text += "\n" + block
+
+path.write_text(text)
+PY
+    ok "Installed Herdr shell aliases in $rc"
+  done
 }
 
 refresh_omarchy_theme() {
@@ -112,6 +174,9 @@ ok "Installed Omarchy Herdr theme template"
 
 copy_file 0755 "$HOOK_SOURCE" "$HOOK_TARGET"
 ok "Installed Omarchy Herdr theme sync hook"
+
+install_herdr_helpers
+install_shell_aliases
 
 if refresh_omarchy_theme; then
   # omarchy theme refresh runs the theme-set hooks, including sync-herdr. Run it

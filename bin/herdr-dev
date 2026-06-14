@@ -1,0 +1,542 @@
+#!/bin/bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: herdr-dev [options] [ai-command] [second-ai-command]
+       herdr-dev [options] --layout tds [agent-command]
+       herdr-dev [options] --layout swarm <pane-count> [command...]
+
+Create or focus a project workspace in a Herdr session, then attach to it.
+By default this uses the default Herdr session and a workspace named after the
+current directory. If that workspace does not exist, herdr-dev bootstraps a
+layout.
+
+Layouts:
+  tdl     editor pane, bottom terminal pane, right AI pane, optional second AI
+  tds     2x2 square: editor, diff watch, terminal, default AI/agent
+  swarm   tiled swarm with N panes all running the same command
+
+Options:
+  -s, --session NAME    Herdr session to use (default: default)
+  -w, --workspace NAME  Workspace label to create/focus
+  -C, --dir PATH        Project directory (default: current directory)
+  -l, --layout NAME     tdl, tds, or swarm (default: tdl)
+      --reset           Close the matching workspace before bootstrapping it
+      --no-attach       Bootstrap/focus only; print attach command instead of opening Herdr
+  -h, --help            Show this help
+
+Environment:
+  HERDR_DEV_SESSION                Herdr session to use (default: default)
+  HERDR_DEV_WORKSPACE              Workspace label to create/focus
+  HERDR_DEV_LAYOUT                 tdl, tds, or swarm
+  HERDR_DEV_EDITOR                 Editor command (default: EDITOR or nvim)
+  HERDR_DEV_AI_COMMAND             AI command (default: omarchy-launch-ai --path .)
+  HERDR_DEV_DIFF_COMMAND           tds diff command (default: hunk diff --watch)
+  HERDR_DEV_TDS_AGENT              tds agent command (default: HERDR_DEV_AI_COMMAND)
+  HERDR_DEV_EDITOR_TERMINAL_RATIO  Existing editor share before bottom terminal (default: 0.85)
+  HERDR_DEV_EDITOR_AI_RATIO        Existing editor share before right AI pane (default: 0.70)
+  HERDR_DEV_AI_STACK_RATIO         Existing top AI share before second AI pane (default: 0.50)
+
+Examples:
+  herdr-dev
+  herdr-dev cx
+  herdr-dev cx codex
+  herdr-dev --layout tds
+  herdr-dev --layout swarm 6
+  herdr-dev --workspace omarchy
+  herdr-dev --reset
+EOF
+}
+
+sanitize_name() {
+  local raw safe
+  raw=$1
+  safe=$(printf '%s' "$raw" | tr '.:' '--' | sed 's/[^[:alnum:]_-]/-/g; s/--*/-/g; s/^-//; s/-$//')
+  printf '%s' "${safe:-dev}"
+}
+
+require_command() {
+  local command_name
+  command_name=$1
+
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "herdr-dev: missing required command: $command_name" >&2
+    exit 1
+  fi
+}
+
+herdr_session() {
+  if [[ $session == "default" ]]; then
+    herdr "$@"
+  else
+    herdr --session "$session" "$@"
+  fi
+}
+
+attach_command() {
+  if [[ $session == "default" ]]; then
+    printf 'herdr'
+  else
+    printf 'herdr --session %q' "$session"
+  fi
+}
+
+is_session_running() {
+  herdr session list --json | jq -e --arg name "$session" '
+    .sessions[]? | select(.name == $name and .running == true)
+  ' >/dev/null
+}
+
+wait_for_session() {
+  local attempts
+  attempts=0
+
+  until herdr_session workspace list >/dev/null 2>&1; do
+    if (( attempts >= 100 )); then
+      echo "herdr-dev: timed out waiting for Herdr session '$session'" >&2
+      if [[ -r $log_file ]]; then
+        echo "--- $log_file ---" >&2
+        tail -40 "$log_file" >&2 || true
+      fi
+      exit 1
+    fi
+
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+}
+
+start_session_if_needed() {
+  local -a command
+
+  if is_session_running; then
+    return 0
+  fi
+
+  echo "Starting Herdr session '$session'..." >&2
+  command=(herdr)
+  if [[ $session != "default" ]]; then
+    command+=(--session "$session")
+  fi
+  command+=(server)
+
+  nohup "${command[@]}" >"$log_file" 2>&1 &
+  wait_for_session
+}
+
+version_at_least() {
+  local version minimum index current required
+  local -a version_parts minimum_parts
+  version=${1#v}
+  minimum=${2#v}
+
+  IFS=. read -r -a version_parts <<<"$version"
+  IFS=. read -r -a minimum_parts <<<"$minimum"
+
+  for index in 0 1 2; do
+    current=${version_parts[$index]:-0}
+    required=${minimum_parts[$index]:-0}
+    current=${current%%[^0-9]*}
+    required=${required%%[^0-9]*}
+    current=${current:-0}
+    required=${required:-0}
+
+    if (( current > required )); then
+      return 0
+    elif (( current < required )); then
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+detect_herdr_capabilities() {
+  local server_version
+
+  if herdr pane --help 2>&1 | grep -q -- '--ratio'; then
+    herdr_cli_supports_split_ratio=true
+  fi
+
+  server_version=$(herdr_session status server 2>/dev/null | awk '/^version:/ { print $2; exit }')
+  if [[ -n $server_version ]] && version_at_least "$server_version" "0.6.10"; then
+    herdr_server_supports_split_ratio=true
+  fi
+
+  if [[ $herdr_cli_supports_split_ratio == "true" && $herdr_server_supports_split_ratio == "true" ]]; then
+    herdr_supports_split_ratio=true
+  fi
+}
+
+warn_if_ratio_unsupported() {
+  if [[ $herdr_supports_split_ratio == "true" ]]; then
+    return 0
+  fi
+
+  if [[ $herdr_cli_supports_split_ratio != "true" ]]; then
+    echo "herdr-dev: $(herdr --version) does not support 'pane split --ratio'; using 50/50 splits." >&2
+    echo "herdr-dev: run 'herdr update --handoff' or 'herdr update' plus a server restart to enable ratios." >&2
+  elif [[ $herdr_server_supports_split_ratio != "true" ]]; then
+    echo "herdr-dev: the Herdr CLI supports --ratio, but the running '$session' server does not; using 50/50 splits." >&2
+    echo "herdr-dev: restart or hand off the server after updating Herdr." >&2
+  fi
+}
+
+find_workspace_id() {
+  herdr_session workspace list | jq -r --arg label "$workspace_label" '
+    first(.result.workspaces[]? | select(.label == $label) | .workspace_id) // ""
+  '
+}
+
+close_existing_workspace() {
+  local workspace_id
+  workspace_id=$(find_workspace_id)
+
+  if [[ -n $workspace_id ]]; then
+    echo "Closing existing Herdr workspace '$workspace_label' in session '$session'..." >&2
+    herdr_session workspace close "$workspace_id" >/dev/null
+  fi
+}
+
+split_pane() {
+  local target direction ratio
+  local -a args
+  target=$1
+  direction=$2
+  ratio=${3:-}
+
+  args=(pane split "$target" --direction "$direction" --cwd "$project_dir" --no-focus)
+
+  if [[ $herdr_supports_split_ratio == "true" && -n $ratio ]]; then
+    args+=(--ratio "$ratio")
+  fi
+
+  herdr_session "${args[@]}" | jq -r '.result.pane.pane_id'
+}
+
+run_in_pane() {
+  local pane_id command_text
+  pane_id=$1
+  command_text=$2
+
+  [[ -n $command_text ]] || return 0
+  herdr_session pane run "$pane_id" "$command_text"
+}
+
+rename_pane() {
+  local pane_id label
+  pane_id=$1
+  label=$2
+
+  herdr_session pane rename "$pane_id" "$label" >/dev/null || true
+}
+
+editor_command() {
+  printf '%s .' "${HERDR_DEV_EDITOR:-${EDITOR:-nvim}}"
+}
+
+default_ai_command() {
+  printf '%s' "${HERDR_DEV_AI_COMMAND:-omarchy-launch-ai --path .}"
+}
+
+bootstrap_tdl_layout() {
+  local workspace_json editor_pane terminal_pane ai_pane ai2_pane
+
+  workspace_json=$(herdr_session workspace create \
+    --cwd "$project_dir" \
+    --label "$workspace_label" \
+    --focus)
+
+  editor_pane=$(jq -r '.result.root_pane.pane_id' <<<"$workspace_json")
+
+  # tdl: editor above a bottom terminal, with AI split to the right of editor.
+  # Ratio is the existing pane's share after split.
+  terminal_pane=$(split_pane "$editor_pane" down "${HERDR_DEV_EDITOR_TERMINAL_RATIO:-0.85}")
+  ai_pane=$(split_pane "$editor_pane" right "${HERDR_DEV_EDITOR_AI_RATIO:-0.70}")
+
+  rename_pane "$editor_pane" editor
+  rename_pane "$terminal_pane" terminal
+  rename_pane "$ai_pane" "$ai_command"
+
+  if [[ -n $second_ai_command ]]; then
+    ai2_pane=$(split_pane "$ai_pane" down "${HERDR_DEV_AI_STACK_RATIO:-0.50}")
+    rename_pane "$ai2_pane" "$second_ai_command"
+    run_in_pane "$ai2_pane" "$second_ai_command"
+  fi
+
+  run_in_pane "$ai_pane" "$ai_command"
+  run_in_pane "$editor_pane" "$(editor_command)"
+}
+
+bootstrap_tds_layout() {
+  local workspace_json editor_pane terminal_pane diff_pane agent_pane diff_command agent_command
+
+  workspace_json=$(herdr_session workspace create \
+    --cwd "$project_dir" \
+    --label "$workspace_label" \
+    --focus)
+
+  editor_pane=$(jq -r '.result.root_pane.pane_id' <<<"$workspace_json")
+  terminal_pane=$(split_pane "$editor_pane" down "0.50")
+  diff_pane=$(split_pane "$editor_pane" right "0.50")
+  agent_pane=$(split_pane "$terminal_pane" right "0.50")
+
+  diff_command=${HERDR_DEV_DIFF_COMMAND:-hunk diff --watch}
+  agent_command=${tds_agent_command:-${HERDR_DEV_TDS_AGENT:-$(default_ai_command)}}
+
+  rename_pane "$editor_pane" editor
+  rename_pane "$terminal_pane" terminal
+  rename_pane "$diff_pane" diff
+  rename_pane "$agent_pane" "$agent_command"
+
+  run_in_pane "$editor_pane" "$(editor_command)"
+  run_in_pane "$diff_pane" "$diff_command"
+  run_in_pane "$agent_pane" "$agent_command"
+}
+
+split_swarm_group() {
+  local pane_id count direction first_count second_count ratio new_pane next_direction
+  pane_id=$1
+  count=$2
+  direction=$3
+
+  if (( count <= 1 )); then
+    swarm_panes+=("$pane_id")
+    return 0
+  fi
+
+  first_count=$(((count + 1) / 2))
+  second_count=$((count - first_count))
+  ratio=$(awk -v first="$first_count" -v total="$count" 'BEGIN { printf "%.6f", first / total }')
+
+  new_pane=$(split_pane "$pane_id" "$direction" "$ratio")
+  if [[ $direction == "right" ]]; then
+    next_direction=down
+  else
+    next_direction=right
+  fi
+
+  split_swarm_group "$pane_id" "$first_count" "$next_direction"
+  split_swarm_group "$new_pane" "$second_count" "$next_direction"
+}
+
+bootstrap_swarm_layout() {
+  local workspace_json root_pane index pane_id
+
+  workspace_json=$(herdr_session workspace create \
+    --cwd "$project_dir" \
+    --label "$workspace_label" \
+    --focus)
+
+  root_pane=$(jq -r '.result.root_pane.pane_id' <<<"$workspace_json")
+  swarm_panes=()
+  split_swarm_group "$root_pane" "$swarm_count" right
+
+  index=1
+  for pane_id in "${swarm_panes[@]}"; do
+    rename_pane "$pane_id" "swarm-$index"
+    run_in_pane "$pane_id" "$swarm_command"
+    index=$((index + 1))
+  done
+}
+
+bootstrap_layout() {
+  echo "Bootstrapping Herdr $layout layout in workspace '$workspace_label' at '$project_dir'..." >&2
+  warn_if_ratio_unsupported
+
+  case $layout in
+    tdl)
+      bootstrap_tdl_layout
+      ;;
+    tds)
+      bootstrap_tds_layout
+      ;;
+    swarm)
+      bootstrap_swarm_layout
+      ;;
+    *)
+      echo "herdr-dev: unknown layout: $layout" >&2
+      exit 1
+      ;;
+  esac
+}
+
+session="${HERDR_DEV_SESSION:-default}"
+workspace_label="${HERDR_DEV_WORKSPACE:-}"
+layout="${HERDR_DEV_LAYOUT:-tdl}"
+project_dir=$PWD
+attach=true
+reset=false
+herdr_cli_supports_split_ratio=false
+herdr_server_supports_split_ratio=false
+herdr_supports_split_ratio=false
+ai_command=
+second_ai_command=
+tds_agent_command=
+swarm_count=
+swarm_command=
+declared_workspace=false
+
+while (( $# > 0 )); do
+  case $1 in
+    -s|--session)
+      [[ -n ${2:-} ]] || { echo "herdr-dev: --session requires a value" >&2; exit 1; }
+      session=$2
+      shift 2
+      ;;
+    -w|--workspace)
+      [[ -n ${2:-} ]] || { echo "herdr-dev: --workspace requires a value" >&2; exit 1; }
+      workspace_label=$2
+      declared_workspace=true
+      shift 2
+      ;;
+    -C|--dir)
+      [[ -n ${2:-} ]] || { echo "herdr-dev: --dir requires a value" >&2; exit 1; }
+      project_dir=$2
+      shift 2
+      ;;
+    -l|--layout)
+      [[ -n ${2:-} ]] || { echo "herdr-dev: --layout requires a value" >&2; exit 1; }
+      layout=$2
+      shift 2
+      ;;
+    --reset)
+      reset=true
+      shift
+      ;;
+    --no-attach)
+      attach=false
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -* )
+      echo "herdr-dev: unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+case ${1:-} in
+  tdl|dev)
+    layout=tdl
+    shift
+    ;;
+  tds|square)
+    layout=tds
+    shift
+    ;;
+  tsl|swarm)
+    layout=swarm
+    shift
+    ;;
+esac
+
+case $layout in
+  tdl)
+    if (( $# > 2 )); then
+      echo "herdr-dev: tdl layout expects at most two command strings" >&2
+      usage >&2
+      exit 1
+    fi
+    ai_command=${1:-$(default_ai_command)}
+    second_ai_command=${2:-}
+    ;;
+  tds)
+    if (( $# > 1 )); then
+      echo "herdr-dev: tds layout expects at most one optional agent command" >&2
+      usage >&2
+      exit 1
+    fi
+    tds_agent_command=${1:-}
+    ;;
+  swarm)
+    if (( $# < 1 )); then
+      echo "herdr-dev: swarm layout requires <pane-count> [command...]" >&2
+      usage >&2
+      exit 1
+    fi
+    swarm_count=$1
+    shift
+    swarm_command="${*:-$(default_ai_command)}"
+    if ! [[ $swarm_count =~ ^[0-9]+$ ]] || (( swarm_count < 1 )); then
+      echo "herdr-dev: swarm pane count must be a positive integer" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "herdr-dev: unknown layout: $layout" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
+
+require_command herdr
+require_command jq
+require_command awk
+
+if [[ ! -d $project_dir ]]; then
+  echo "herdr-dev: project directory does not exist: $project_dir" >&2
+  exit 1
+fi
+
+project_dir=$(cd "$project_dir" && pwd)
+if [[ -z $workspace_label ]]; then
+  case $layout in
+    tdl)
+      workspace_label=$(basename "$project_dir")
+      ;;
+    tds)
+      workspace_label="$(basename "$project_dir")-square"
+      ;;
+    swarm)
+      workspace_label="$(basename "$project_dir")-swarm"
+      ;;
+  esac
+fi
+
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/herdr-dev"
+mkdir -p "$state_dir"
+log_file="$state_dir/$(sanitize_name "$session").log"
+
+start_session_if_needed
+detect_herdr_capabilities
+
+if [[ $reset == "true" ]]; then
+  close_existing_workspace
+fi
+
+workspace_id=$(find_workspace_id)
+if [[ -n $workspace_id ]]; then
+  echo "Focusing existing Herdr workspace '$workspace_label' in session '$session'..." >&2
+  herdr_session workspace focus "$workspace_id" >/dev/null
+else
+  bootstrap_layout
+fi
+
+if [[ $attach != "true" ]]; then
+  echo "Ready: $(attach_command)"
+  exit 0
+fi
+
+if [[ -n ${HERDR_ENV:-} && ${HERDR_DEV_NESTED_ATTACH:-} != "1" ]]; then
+  # The workspace focus above is enough for an existing Herdr client.
+  exit 0
+fi
+
+if [[ $session == "default" ]]; then
+  exec herdr
+else
+  exec herdr --session "$session"
+fi
