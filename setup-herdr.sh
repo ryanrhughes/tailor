@@ -23,6 +23,7 @@ HOOK_TARGET="$HOME/.config/omarchy/hooks/theme-set.d/sync-herdr"
 
 HERDR_OMARCHY_PLUGIN_ID="herdr-omarchy"
 HERDR_OMARCHY_PLUGIN_SOURCE="$SCRIPT_DIR/herdr-omarchy"
+HERDR_OMARCHY_COMMANDS=(hdl hds hdlm hsl)
 
 CURRENT_THEME_FRAGMENTS=(
   "$HOME/.local/state/omarchy/current/theme/herdr.toml"
@@ -125,6 +126,43 @@ install_herdr_omarchy_plugin() {
   return 1
 }
 
+install_herdr_omarchy_commands() {
+  local command target wrapper
+
+  if [[ ! -x $HERDR_OMARCHY_PLUGIN_SOURCE/bin/herdr-omarchy ]]; then
+    warn "Missing Herdr Omarchy command implementation: $HERDR_OMARCHY_PLUGIN_SOURCE/bin/herdr-omarchy"
+    return 1
+  fi
+
+  mkdir -p "$HOME/.local/bin"
+  for command in "${HERDR_OMARCHY_COMMANDS[@]}"; do
+    target="$HOME/.local/bin/$command"
+    wrapper=$(cat <<EOF
+#!/usr/bin/env bash
+# Tailor-managed dispatcher for the herdr-omarchy plugin.
+# The layout implementation lives in the plugin; this command only preserves the
+# fast shell workflow for Herdr-specific h* names and leaves tmux t* names alone.
+set -euo pipefail
+
+if [[ -z \${HERDR_ENV:-} || -z \${HERDR_PANE_ID:-} ]]; then
+  echo "$command: run this from inside a Herdr pane (start Herdr with: herdr)" >&2
+  exit 1
+fi
+
+export HERDR_OMARCHY_CWD="\$PWD"
+exec "$HERDR_OMARCHY_PLUGIN_SOURCE/bin/herdr-omarchy" "$command" "\$@"
+EOF
+)
+    if [[ ! -f $target ]] || [[ $(<"$target") != "$wrapper" ]]; then
+      printf '%s\n' "$wrapper" >"$target"
+      chmod 0755 "$target"
+      ok "Installed $command dispatcher to $target"
+    else
+      ok "$command dispatcher already installed"
+    fi
+  done
+}
+
 refresh_omarchy_theme() {
   if ! command -v omarchy >/dev/null 2>&1; then
     warn "omarchy not in PATH — installed theme files but could not render current Herdr theme"
@@ -195,6 +233,7 @@ copy_file 0755 "$HOOK_SOURCE" "$HOOK_TARGET"
 ok "Installed Omarchy Herdr theme sync hook"
 
 install_herdr_omarchy_plugin || true
+install_herdr_omarchy_commands || true
 
 if refresh_omarchy_theme; then
   # omarchy theme refresh runs the theme-set hooks, including sync-herdr. Run it

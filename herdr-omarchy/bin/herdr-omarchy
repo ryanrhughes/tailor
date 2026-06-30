@@ -125,6 +125,13 @@ current_tab_id() {
 
 current_cwd() {
   local pane_json cwd
+
+  if [[ -n ${HERDR_OMARCHY_CWD:-} ]]; then
+    cwd=$(cd "$HERDR_OMARCHY_CWD" && pwd) || fail "HERDR_OMARCHY_CWD does not exist: $HERDR_OMARCHY_CWD"
+    printf '%s' "$cwd"
+    return 0
+  fi
+
   pane_json=$(current_pane_json "$(current_root_pane)")
   cwd=$(pane_cwd_from_json <<<"$pane_json")
   [[ -n $cwd ]] || cwd=$PWD

@@ -71,7 +71,7 @@ Installed to `~/.config/opencode/command/`:
 
 ## Herdr plugin
 
-`herdr-omarchy/` is a standalone Herdr plugin for Omarchy-style layouts. Tailor links it from this checkout, and others can install it directly with:
+`herdr-omarchy/` is a standalone Herdr plugin for Omarchy-style layouts. Tailor links it from this checkout and installs lightweight `hdl` / `hds` / `hdlm` / `hsl` dispatchers that run the plugin implementation from inside a Herdr pane. Others can install the plugin directly with:
 
 ```bash
 herdr plugin install ryanrhughes/tailor/herdr-omarchy --yes

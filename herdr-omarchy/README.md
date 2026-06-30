@@ -28,6 +28,8 @@ herdr plugin action invoke hdlm --plugin herdr-omarchy
 herdr plugin action invoke hsl --plugin herdr-omarchy
 ```
 
+Tailor-managed machines also get lightweight `hdl`, `hds`, `hdlm`, and `hsl` shell dispatchers. Run those from inside a Herdr pane; they call the plugin implementation with the invoking shell's current directory, without taking over tmux's `t*` command names.
+
 The `h` prefix is for Herdr:
 
 | Action | What it does |
