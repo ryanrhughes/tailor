@@ -48,6 +48,53 @@ backup_existing_config_once() {
   fi
 }
 
+migrate_legacy_herdr_layout_helpers() {
+  local found=false
+  local path rc
+
+  for path in \
+    "$HOME/.local/bin/herdr-dev" \
+    "$HOME/.local/bin/herdr-tds" \
+    "$HOME/.local/bin/herdr-tdlm" \
+    "$HOME/.local/bin/herdr-tsl"; do
+    if [[ -f $path ]] && grep -q 'HERDR_DEV_\|exec herdr-dev --layout\|herdr-tdlm' "$path" 2>/dev/null; then
+      rm -f "$path"
+      ok "Removed legacy Herdr helper $path"
+      found=true
+    fi
+  done
+
+  for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+    [[ -f $rc ]] || continue
+    if grep -q '# BEGIN TAILOR HERDR ALIASES' "$rc"; then
+      python3 - "$rc" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+begin = "# BEGIN TAILOR HERDR ALIASES\n"
+end = "# END TAILOR HERDR ALIASES\n"
+text = path.read_text()
+start = text.find(begin)
+if start != -1:
+    stop = text.find(end, start)
+    if stop != -1:
+        stop += len(end)
+        text = text[:start].rstrip() + "\n" + text[stop:].lstrip("\n")
+        path.write_text(text)
+PY
+      ok "Removed legacy Herdr alias block from $rc"
+      found=true
+    fi
+  done
+
+  if [[ $found == true ]]; then
+    info "Open a new shell, or run 'unalias hdl hds hdlm hsl hic hix hicx 2>/dev/null || true', to drop aliases already loaded in this shell"
+  else
+    ok "No legacy Herdr layout helpers found"
+  fi
+}
+
 install_herdr_omarchy_plugin() {
   if [[ ! -d $HERDR_OMARCHY_PLUGIN_SOURCE ]]; then
     warn "Missing Herdr Omarchy plugin source: $HERDR_OMARCHY_PLUGIN_SOURCE"
@@ -137,6 +184,7 @@ else
 fi
 
 backup_existing_config_once
+migrate_legacy_herdr_layout_helpers
 copy_file 0644 "$HERDR_CONFIG_SOURCE" "$HERDR_CONFIG_TARGET"
 ok "Installed Herdr config to $HERDR_CONFIG_TARGET"
 
