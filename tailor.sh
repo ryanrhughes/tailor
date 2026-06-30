@@ -143,7 +143,7 @@ fi
 # Codexbar (waybar wrapper for Codex/Claude usage)
 "$SCRIPT_DIR/setup-codexbar.sh"
 
-# Herdr terminal workspace manager config + Omarchy theme sync.
+# Herdr terminal workspace manager config + Omarchy theme sync + layout plugin.
 "$SCRIPT_DIR/setup-herdr.sh"
 
 # Copy remaining ~/.config files (excluding directories that have their own setup scripts)
@@ -169,8 +169,11 @@ done
 # Setup AI coding tools (OpenCode skills, MCP servers, etc.)
 "$SCRIPT_DIR/setup-ai.sh"
 
-# Add source line to hyprland.conf if it doesn't already exist
-if ! grep -q "source = ~/.config/hypr/windows.conf" ~/.config/hypr/hyprland.conf 2>/dev/null; then
+# Legacy Hyprland .conf installs need windows.conf sourced explicitly. Modern
+# Omarchy uses hyprland.lua, so do not create a stale hyprland.conf on Lua-based
+# systems.
+if [ -f ~/.config/hypr/hyprland.conf ] && [ ! -f ~/.config/hypr/hyprland.lua ] && \
+   ! grep -q "source = ~/.config/hypr/windows.conf" ~/.config/hypr/hyprland.conf 2>/dev/null; then
   echo "source = ~/.config/hypr/windows.conf" >> ~/.config/hypr/hyprland.conf
 fi
 

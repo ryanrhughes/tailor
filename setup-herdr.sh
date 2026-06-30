@@ -1,5 +1,5 @@
 #!/bin/bash
-# Configure Herdr and its Omarchy-driven theme integration.
+# Configure Herdr, its Omarchy-driven theme integration, and the herdr-omarchy layout plugin.
 # Idempotent: safe to re-run.
 
 set -euo pipefail
@@ -21,17 +21,8 @@ THEME_TEMPLATE_TARGET="$HOME/.config/omarchy/themed/herdr.toml.tpl"
 HOOK_SOURCE="$SCRIPT_DIR/config/omarchy/hooks/theme-set.d/sync-herdr"
 HOOK_TARGET="$HOME/.config/omarchy/hooks/theme-set.d/sync-herdr"
 
-HERDR_HELPER_SCRIPTS=(
-  herdr-dev
-  herdr-tds
-  herdr-tdlm
-  herdr-tsl
-)
-
-SHELL_ALIAS_TARGETS=(
-  "$HOME/.zshrc"
-  "$HOME/.bashrc"
-)
+HERDR_OMARCHY_PLUGIN_ID="herdr-omarchy"
+HERDR_OMARCHY_PLUGIN_SOURCE="$SCRIPT_DIR/herdr-omarchy"
 
 CURRENT_THEME_FRAGMENTS=(
   "$HOME/.local/state/omarchy/current/theme/herdr.toml"
@@ -57,54 +48,34 @@ backup_existing_config_once() {
   fi
 }
 
-install_herdr_helpers() {
-  local script
+install_herdr_omarchy_plugin() {
+  if [[ ! -d $HERDR_OMARCHY_PLUGIN_SOURCE ]]; then
+    warn "Missing Herdr Omarchy plugin source: $HERDR_OMARCHY_PLUGIN_SOURCE"
+    return 1
+  fi
 
-  mkdir -p "$HOME/.local/bin"
-  for script in "${HERDR_HELPER_SCRIPTS[@]}"; do
-    copy_file 0755 "$SCRIPT_DIR/bin/$script" "$HOME/.local/bin/$script"
-    ok "Installed $script to ~/.local/bin/$script"
-  done
-}
+  if ! command -v herdr >/dev/null 2>&1; then
+    warn "herdr not in PATH — cannot link $HERDR_OMARCHY_PLUGIN_ID plugin yet"
+    return 1
+  fi
 
-install_shell_aliases() {
-  local rc
+  # Tailor links the plugin from this checkout so local updates take effect on
+  # the next run. If an older GitHub-managed install exists, remove it first.
+  herdr plugin unlink "$HERDR_OMARCHY_PLUGIN_ID" >/dev/null 2>&1 || \
+    herdr plugin uninstall "$HERDR_OMARCHY_PLUGIN_ID" >/dev/null 2>&1 || true
 
-  for rc in "${SHELL_ALIAS_TARGETS[@]}"; do
-    mkdir -p "$(dirname "$rc")"
-    touch "$rc"
+  if herdr plugin link "$HERDR_OMARCHY_PLUGIN_SOURCE" >/dev/null 2>&1; then
+    ok "Linked $HERDR_OMARCHY_PLUGIN_ID plugin from $HERDR_OMARCHY_PLUGIN_SOURCE"
+    return 0
+  fi
 
-    python3 - "$rc" <<'PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-begin = "# BEGIN TAILOR HERDR ALIASES\n"
-end = "# END TAILOR HERDR ALIASES\n"
-block = begin + """# Local Herdr workspace layout helpers managed by Tailor.
-alias hdl='herdr-dev'
-alias hic='herdr-dev'
-alias hix='herdr-dev cx'
-alias hicx='herdr-dev cx codex'
-alias hds='herdr-tds'
-alias hdlm='herdr-tdlm'
-alias hsl='herdr-tsl'
-""" + end
-
-text = path.read_text() if path.exists() else ""
-if begin in text and end in text:
-    start = text.index(begin)
-    stop = text.index(end, start) + len(end)
-    text = text[:start] + block + text[stop:]
-else:
-    if text and not text.endswith("\n"):
-        text += "\n"
-    text += "\n" + block
-
-path.write_text(text)
-PY
-    ok "Installed Herdr shell aliases in $rc"
-  done
+  warn "Could not link $HERDR_OMARCHY_PLUGIN_ID plugin"
+  if herdr status server 2>/dev/null | grep -q '^compatible: no'; then
+    warn "Running Herdr server is older than the CLI; run 'herdr update --handoff' or restart Herdr, then re-run Tailor"
+  else
+    warn "Run 'herdr plugin link $HERDR_OMARCHY_PLUGIN_SOURCE' after Herdr is running with plugin support"
+  fi
+  return 1
 }
 
 refresh_omarchy_theme() {
@@ -175,8 +146,7 @@ ok "Installed Omarchy Herdr theme template"
 copy_file 0755 "$HOOK_SOURCE" "$HOOK_TARGET"
 ok "Installed Omarchy Herdr theme sync hook"
 
-install_herdr_helpers
-install_shell_aliases
+install_herdr_omarchy_plugin || true
 
 if refresh_omarchy_theme; then
   # omarchy theme refresh runs the theme-set hooks, including sync-herdr. Run it

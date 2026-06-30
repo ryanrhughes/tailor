@@ -1,2 +1,0 @@
-#!/bin/bash
-exec herdr-dev --layout swarm "$@"

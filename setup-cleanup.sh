@@ -55,8 +55,71 @@ cleanup_figma_developer_mcp() {
   fi
 }
 
+cleanup_legacy_herdr_layout_helpers() {
+  hdr "legacy Herdr layout helpers"
+
+  local found=false
+  local path rc
+
+  for path in \
+    "$HOME/.local/bin/herdr-dev" \
+    "$HOME/.local/bin/herdr-tds" \
+    "$HOME/.local/bin/herdr-tdlm" \
+    "$HOME/.local/bin/herdr-tsl"; do
+    if [ -f "$path" ] && grep -q 'HERDR_DEV_\|exec herdr-dev --layout\|herdr-tdlm' "$path" 2>/dev/null; then
+      found=true
+      remove_path "$path"
+    fi
+  done
+
+  for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+    [ -f "$rc" ] || continue
+    if grep -q '# BEGIN TAILOR HERDR ALIASES' "$rc"; then
+      found=true
+      python3 - "$rc" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+begin = "# BEGIN TAILOR HERDR ALIASES\n"
+end = "# END TAILOR HERDR ALIASES\n"
+text = path.read_text()
+start = text.find(begin)
+if start != -1:
+    stop = text.find(end, start)
+    if stop != -1:
+        stop += len(end)
+        text = text[:start].rstrip() + "\n" + text[stop:].lstrip("\n")
+        path.write_text(text)
+PY
+      ok "Removed legacy Herdr alias block from $rc"
+      removed_any=true
+    fi
+  done
+
+  if [ "$found" = false ]; then
+    ok "legacy Herdr layout helpers not installed"
+  fi
+}
+
+cleanup_legacy_hypr_bindings_conf() {
+  hdr "legacy Hyprland bindings.conf"
+
+  local path="$HOME/.config/hypr/bindings.conf"
+
+  if [ -f "$path" ] && \
+     grep -q 'Personal Hyprland bindings' "$path" 2>/dev/null && \
+     grep -q 'config/hypr/bindings.conf' "$path" 2>/dev/null; then
+    remove_path "$path"
+  else
+    ok "legacy Tailor bindings.conf not installed"
+  fi
+}
+
 echo "Cleaning up stale Tailor-managed artifacts..."
 cleanup_figma_developer_mcp
+cleanup_legacy_herdr_layout_helpers
+cleanup_legacy_hypr_bindings_conf
 
 if [ "$removed_any" = true ]; then
   echo ""

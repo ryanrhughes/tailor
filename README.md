@@ -31,7 +31,7 @@ The pre-flight bails with clear hints if anything's missing. First run on a fres
 | `setup-cli-tools.sh` | Installs internal CLIs (cortex, nebula, hey, fizzy, basecamp) and runs each one's `skill install` to register the bundled agent skill. |
 | `setup-cli-auth.sh` | For token-based CLIs (cortex/nebula/fizzy): pulls token + config from 1P → writes the CLI's config file. For OAuth CLIs (claude/codex/pi/hey/basecamp): actively verifies auth by exercising the API. Loops with a `gum` prompt to recheck after fixing. |
 | `setup-codexbar.sh` | Installs `codexbar-waybar` (built from `~/Work/codexbar-waybar`), runs `codexbar-waybar-install`, and warns if `codexbar-tui` is installed. |
-| `setup-herdr.sh` | Installs the canonical Herdr config, Omarchy theme integration (`herdr.toml.tpl` + `theme-set.d/sync-herdr`), and local Herdr layout helpers (`herdr-dev`, `herdr-tds`, `herdr-tdlm`, `herdr-tsl`) plus aliases. |
+| `setup-herdr.sh` | Installs the canonical Herdr config, Omarchy theme integration (`herdr.toml.tpl` + `theme-set.d/sync-herdr`), and links the `herdr-omarchy` plugin for Omarchy-style Herdr layouts (`hdl`, `hds`, `hdlm`, `hsl`). |
 | `setup-ai.sh` | Claude Code attribution settings, OpenCode config + slash commands. |
 
 ## 1Password items used
@@ -68,6 +68,14 @@ Installed to `~/.config/opencode/command/`:
 
 - `/create-prd` — generate a PRD from a feature description
 - `/generate-tasks` — generate a task list from requirements/PRD
+
+## Herdr plugin
+
+`herdr-omarchy/` is a standalone Herdr plugin for Omarchy-style layouts. Tailor links it from this checkout, and others can install it directly with:
+
+```bash
+herdr plugin install ryanrhughes/tailor/herdr-omarchy --yes
+```
 
 ## Environment variables
 

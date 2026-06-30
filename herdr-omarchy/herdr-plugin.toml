@@ -1,0 +1,46 @@
+id = "herdr-omarchy"
+name = "Herdr Omarchy Layouts"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Omarchy-style development layouts for Herdr panes, tabs, and workspaces."
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "hdl"
+title = "Create Herdr dev layout"
+command = ["bash", "bin/herdr-omarchy", "hdl"]
+
+[[actions]]
+id = "hdl-cx"
+title = "Create Herdr dev layout with cx"
+command = ["bash", "bin/herdr-omarchy", "hdl", "cx"]
+
+[[actions]]
+id = "hdl-cx-codex"
+title = "Create Herdr dev layout with cx + codex"
+command = ["bash", "bin/herdr-omarchy", "hdl", "cx", "codex"]
+
+[[actions]]
+id = "hds"
+title = "Create Herdr dev square layout"
+command = ["bash", "bin/herdr-omarchy", "hds"]
+
+[[actions]]
+id = "hdlm"
+title = "Create Herdr dev-layout tabs per subdirectory"
+command = ["bash", "bin/herdr-omarchy", "hdlm"]
+
+[[actions]]
+id = "hdlm-cx"
+title = "Create Herdr dev-layout tabs per subdirectory with cx"
+command = ["bash", "bin/herdr-omarchy", "hdlm", "cx"]
+
+[[actions]]
+id = "hsl"
+title = "Create six-pane Herdr swarm layout"
+command = ["bash", "bin/herdr-omarchy", "hsl", "6"]
+
+[[actions]]
+id = "hsl-cx"
+title = "Create six-pane Herdr swarm layout with cx"
+command = ["bash", "bin/herdr-omarchy", "hsl", "6", "cx"]
