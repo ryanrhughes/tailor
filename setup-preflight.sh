@@ -2,21 +2,22 @@
 # Pre-flight checks for tailor.
 # Exits non-zero on any critical failure with a clear "fix this then re-run" message.
 #
-# Two categories of failure:
-#   (omarchy) — should be provided by Omarchy. If missing, fix upstream.
-#   (user)    — user action required (sign in, install config file, etc).
+# Checks only the basics tailor itself relies on: pacman/gum, the mise
+# toolchain, common utilities, and 1Password auth. Everything else is
+# installed or repaired by the individual setup steps.
 
 set -uo pipefail
 
 # Route stderr through stdout for clean, in-order output.
 exec 2>&1
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
+
 errors=0
 
-hdr()  { echo ""; echo "=== $1 ==="; }
-ok()   { echo "  ✓ $1"; }
+# Override common.sh's fail to also count failures for the final verdict.
 fail() { echo "  ✗ $1"; errors=$((errors+1)); }
-hint() { echo "    $1"; }
 
 check() {
   # check "label" "test cmd" "hint on failure"
@@ -29,40 +30,37 @@ check() {
   fi
 }
 
-hdr "Omarchy"
-check "Omarchy installed" \
-  '[ -d "$HOME/.local/share/omarchy" ]' \
-  "Install Omarchy first: https://omarchy.org"
+hdr "Basics"
+check "pacman installed" \
+  'command -v pacman' \
+  "tailor targets Arch — no pacman means this isn't going to work"
 
-hdr "Toolchain (Omarchy provides)"
-check "mise installed" \
-  'command -v mise' \
-  "(omarchy) Should be in Omarchy baseline. Install: sudo pacman -S mise"
+check "gum installed" \
+  'command -v gum' \
+  "sudo pacman -S gum"
 
-check "node available" \
-  'command -v node' \
-  "(omarchy) Install via mise: mise use -g node@latest"
-
-check "npm available" \
-  'command -v npm' \
-  "(omarchy) Should be in Omarchy baseline. npm ships with mise's node install"
-
-hdr "Utilities (Omarchy provides)"
 for cmd in jq curl gh docker; do
   check "$cmd installed" \
     "command -v $cmd" \
-    "(omarchy) sudo pacman -S $cmd"
+    "sudo pacman -S $cmd"
 done
 
-hdr "AI CLIs (Omarchy provides)"
-# Omarchy installs these via ~/.local/share/omarchy/install/packaging/npx.sh
-# (omarchy-npx-install wrappers) and the omarchy-base.packages list (claude).
-# Tailor only verifies they're present — install/upgrade is Omarchy's job.
-for cmd in claude codex gemini copilot opencode pi playwright-cli ghui; do
-  check "$cmd installed" \
-    "command -v $cmd" \
-    "(omarchy) Should be installed by omarchy-npx-install or omarchy-base.packages — re-run omarchy install or file upstream"
-done
+hdr "Toolchain"
+check "mise installed" \
+  'command -v mise' \
+  "sudo pacman -S mise"
+
+check "node available" \
+  'command -v node' \
+  "Install via mise: mise use -g node@latest"
+
+check "npm available" \
+  'command -v npm' \
+  "npm ships with mise's node install: mise use -g node@latest"
+
+# AI CLIs (claude, codex, pi, opencode, gemini, copilot, playwright, ghui)
+# are installed/repaired by tailor via `mise use -g` in setup-ai.sh — not
+# pre-flight requirements.
 
 hdr "Secrets (1Password)"
 check "op CLI installed" \

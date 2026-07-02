@@ -13,26 +13,43 @@ Tailor doesn't try to do everything — it builds on what Omarchy already provid
    ./tailor.sh
    ```
 
+Run interactively and `tailor.sh` opens a gum picker: run everything, or select just the steps you want. Non-interactive runs (no TTY) do a full run.
+
+```bash
+./tailor.sh              # interactive picker
+./tailor.sh all          # run everything, no prompts
+./tailor.sh envs ssh     # re-run specific steps (changed an env? just: ./tailor.sh envs)
+./tailor.sh list         # list available steps
+```
+
+Steps always execute in pipeline order regardless of the order you name them. A failing step doesn't abort the run (except `preflight`) — remaining steps continue and the summary tells you exactly which steps to re-run.
+
 The pre-flight bails with clear hints if anything's missing. First run on a fresh machine will tell you exactly what 1Password items to create.
 
 ## Pipeline
 
-`tailor.sh` runs these in order. Each is idempotent and can be invoked standalone.
+Each step is `setup-<step>.sh`, idempotent, and can be invoked standalone or via `./tailor.sh <step>`.
 
-| Script | What it does |
+| Step | What it does |
 |---|---|
-| `setup-preflight.sh` | Verifies Omarchy, mise/node/npm, jq/curl/gh/docker, AI CLIs (claude/codex/pi/gemini/copilot/opencode/playwright-cli/ghui), and 1Password auth. Bails on missing prerequisites. |
-| `setup-cleanup.sh` | Removes stale Tailor-managed artifacts from previous versions, like the old unofficial `figma-developer-mcp` install/config. |
-| `setup-envs.sh` | Reads 1P item `tailor-envs` → writes `~/.config/hypr/envs.conf`. |
-| `setup-ssh.sh` | Reads 1P SSH Key item `Github SSH Key` → writes `~/.ssh/id_ed25519_github` + `.pub`; reads 1P Server items tagged `tailor-ssh` → writes `~/.ssh/config` (managed block with markers; preserves any hand-written entries above/below). Pins `github.com` to the GitHub-named local key; every other host defaults to `Host * IdentityAgent ~/.1password/agent.sock`. |
-| `setup-zsh.sh` | Installs `omarchy-zsh` package and runs `omarchy-setup-zsh` (idempotent — detects template signature in `.zshrc`/`.bashrc`). |
-| `setup-pi.sh` | Forces canonical Pi defaults (provider/model/thinking) and installs the canonical extension list. |
-| `setup-ai-skills.sh` | Installs canonical universal skills (firecrawl, rails-skills, skill-creator) via `npx skills add`. Sweeps rejected skills (find-skills, agent-browser). |
-| `setup-cli-tools.sh` | Installs internal CLIs (cortex, nebula, hey, fizzy, basecamp) and runs each one's `skill install` to register the bundled agent skill. |
-| `setup-cli-auth.sh` | For token-based CLIs (cortex/nebula/fizzy): pulls token + config from 1P → writes the CLI's config file. For OAuth CLIs (claude/codex/pi/hey/basecamp): actively verifies auth by exercising the API. Loops with a `gum` prompt to recheck after fixing. |
-| `setup-codexbar.sh` | Installs `codexbar-waybar` (built from `~/Work/codexbar-waybar`), runs `codexbar-waybar-install`, and warns if `codexbar-tui` is installed. |
-| `setup-herdr.sh` | Installs the canonical Herdr config, Omarchy theme integration (`herdr.toml.tpl` + `theme-set.d/sync-herdr`), and links the `herdr-omarchy` plugin for Omarchy-style Herdr layouts (`hdl`, `hds`, `hdlm`, `hsl`). |
-| `setup-ai.sh` | Claude Code attribution settings, OpenCode config + slash commands. |
+| `preflight` | Verifies the basics: pacman, gum, jq/curl/gh/docker, mise/node/npm, and 1Password auth. Bails on missing prerequisites. |
+| `cleanup` | Removes stale Tailor-managed artifacts from previous versions, like the old unofficial `figma-developer-mcp` install/config. |
+| `repos` | Clones Omarchy repos (installer/iso/pkgs) and `kanata-homerow-mods` into `~/Work`. |
+| `apps` | Installs optional desktop apps via Omarchy (Dropbox, GeForce NOW, Tailscale, Voxtype) and AUR (Vesktop), sets Kitty as the Omarchy terminal, and starts the mailcatcher container. |
+| `envs` | Reads 1P item `tailor-envs` → writes `~/.config/hypr/envs.conf`. |
+| `ssh` | Reads 1P SSH Key item `Github SSH Key` → writes `~/.ssh/id_ed25519_github` + `.pub`; reads 1P Server items tagged `tailor-ssh` → writes `~/.ssh/config` (managed block with markers; preserves any hand-written entries above/below). Pins `github.com` to the GitHub-named local key; every other host defaults to `Host * IdentityAgent ~/.1password/agent.sock`. |
+| `zsh` | Installs `omarchy-zsh` package and runs `omarchy-setup-zsh` (idempotent — detects template signature in `.zshrc`/`.bashrc`). |
+| `ai` | Installs missing AI CLI binaries (claude/codex/pi/opencode/gemini/copilot/playwright/ghui/hunk) via `mise use -g`, installs + logs into Mosaic, Claude Code attribution settings, OpenCode config + slash commands. |
+| `pi` | Forces canonical Pi defaults (provider/model/thinking) and installs the canonical extension list. |
+| `ai-skills` | Installs canonical universal skills (firecrawl, rails-skills, skill-creator) via `npx skills add`. Sweeps rejected skills (find-skills, agent-browser). |
+| `cli-tools` | Installs internal CLIs (cortex, nebula, hey, fizzy, basecamp) and runs each one's `skill install` to register the bundled agent skill. |
+| `cli-auth` | For token-based CLIs (cortex/nebula/fizzy): pulls token + config from 1P → writes the CLI's config file. For OAuth CLIs (claude/codex/pi/hey/basecamp): actively verifies auth by exercising the API. Loops with a `gum` prompt to recheck after fixing. |
+| `codexbar` | Installs `codexbar-waybar` (built from `~/Work/codexbar-waybar`), runs `codexbar-waybar-install`, and warns if `codexbar-tui` is installed. |
+| `herdr` | Installs the canonical Herdr config, Omarchy theme integration (`herdr.toml.tpl` + `theme-set.d/sync-herdr`), and links the `herdr-omarchy` plugin for Omarchy-style Herdr layouts (`hdl`, `hds`, `hdlm`, `hsl`). |
+| `config` | Copies `config/**` → `~/.config/` (excluding dirs owned by other steps) and `bin/**` → `~/.local/bin/`; sources `windows.conf` in `hyprland.conf` (legacy .conf systems only); applies 4K scaling to `monitors.conf` when detected. |
+| `dropbox` | Symlinks `~/Pictures`, `~/Videos`, `~/Documents` to their `~/Dropbox` counterparts (backs up existing dirs first). |
+
+Shared output helpers live in `lib/common.sh`; `lib/manual-action.sh` provides the gum-based "do this manually, then recheck" loop.
 
 ## 1Password items used
 
@@ -87,8 +104,9 @@ herdr plugin install ryanrhughes/tailor/herdr-omarchy --yes
 
 Per the "tailor builds on Omarchy baseline" principle, these belong upstream:
 
-- Installing AI CLIs (claude, codex, pi, gemini, copilot, opencode, playwright-cli, ghui) — Omarchy does this via `omarchy-npx-install` and `omarchy-base.packages`.
 - Installing system utilities (jq, curl, gh, docker, mise) — Omarchy.
 - Configuring node via mise — Omarchy.
+
+AI CLIs are the exception: the `ai` step ensures the full canonical set (claude, codex, pi, opencode, gemini, copilot, playwright, ghui, hunk) on every machine via `mise use -g`, so a machine is usable even when Omarchy's own install lags.
 
 If a fresh-machine tailor run fails the preflight on one of these, the fix is to file an Omarchy issue / re-run Omarchy install — not to add install logic here.
