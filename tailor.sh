@@ -1,207 +1,164 @@
 #!/bin/bash
 # Tailor — provision personal customizations on top of Omarchy.
-# Idempotent: safe to re-run.
+# Idempotent: safe to re-run, in whole or one step at a time.
+#
+# Usage:
+#   ./tailor.sh              interactive picker (gum): everything, or select steps
+#   ./tailor.sh all          run everything (also the non-interactive default)
+#   ./tailor.sh <step>...    run specific steps, e.g. ./tailor.sh envs ssh
+#   ./tailor.sh list         list available steps
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+source "$SCRIPT_DIR/lib/common.sh"
 
-# Pre-flight: bail early if any prerequisite is missing.
-"$SCRIPT_DIR/setup-preflight.sh"
+# Ordered step registry: "<id>|<description>". Step <id> runs setup-<id>.sh.
+# Order matters for full runs (preflight gates, cli-tools before cli-auth, etc.)
+STEPS=(
+  "preflight|Verify prerequisites (Omarchy, toolchain, 1Password)"
+  "cleanup|Remove stale artifacts from previous tailor versions"
+  "repos|Clone Omarchy + personal repos into ~/Work"
+  "apps|Desktop apps (Dropbox, Tailscale, Voxtype, ...) + mailcatcher"
+  "envs|~/.config/hypr/envs.conf from 1Password"
+  "ssh|GitHub SSH key + ~/.ssh/config from 1Password"
+  "zsh|zsh via omarchy-zsh"
+  "ai|AI CLI binaries, Mosaic, Claude Code + OpenCode config"
+  "pi|Pi settings + extensions"
+  "ai-skills|Canonical AI skills allowlist"
+  "cli-tools|Internal CLIs (cortex, nebula, hey, fizzy, basecamp)"
+  "cli-auth|CLI tokens from 1Password + OAuth verification"
+  "codexbar|codexbar-waybar install + Waybar integration"
+  "herdr|Herdr config, theme sync + layout plugin"
+  "config|Dotfiles, ~/.local/bin scripts, Hyprland tweaks"
+  "dropbox|Link ~/Pictures ~/Videos ~/Documents to Dropbox"
+)
 
-# Remove stale Tailor-managed artifacts from previous versions.
-"$SCRIPT_DIR/setup-cleanup.sh"
-
-mkdir -p ~/Work/
-
-# Clone repos only if they don't already exist
-if [ ! -d ~/Work/omarchy/omarchy-installer ]; then
-  gh repo clone basecamp/omarchy ~/Work/omarchy/omarchy-installer
-fi
-if [ ! -d ~/Work/omarchy/omarchy-iso ]; then
-  gh repo clone omacom-io/omarchy-iso ~/Work/omarchy/omarchy-iso
-fi
-if [ ! -d ~/Work/omarchy/omarchy-pkgs ]; then
-  gh repo clone omacom-io/omarchy-pkgs ~/Work/omarchy/omarchy-pkgs
-fi
-if [ ! -d ~/Work/kanata-homerow-mods ]; then
-  gh repo clone ryanrhughes/kanata-homerow-mods ~/Work/kanata-homerow-mods
-fi
-
-package_installed() {
-  pacman -Q "$1" >/dev/null 2>&1
-}
-
-dropbox_installed() {
-  command -v dropbox >/dev/null 2>&1 || package_installed dropbox
-}
-
-tailscale_installed() {
-  command -v tailscale >/dev/null 2>&1 &&
-    tailscale status --json 2>/dev/null | jq -e '.BackendState == "Running"' >/dev/null
-}
-
-voxtype_installed() {
-  command -v voxtype >/dev/null 2>&1 &&
-    [ -f "$HOME/.config/voxtype/config.toml" ] &&
-    systemctl --user is-enabled --quiet voxtype.service 2>/dev/null &&
-    find "$HOME/.local/share/voxtype/models" -type f -print -quit 2>/dev/null | grep -q .
-}
-
-vesktop_installed() {
-  command -v vesktop >/dev/null 2>&1 || package_installed vesktop || package_installed vesktop-bin
-}
-
-geforce_now_desktop_installed() {
-  local dir
-
-  for dir in "$HOME/.local/share/applications" /usr/share/applications; do
-    [ -d "$dir" ] || continue
-    find "$dir" -maxdepth 1 -iname '*geforce*now*.desktop' -print -quit | grep -q . && return 0
+step_ids() {
+  local entry
+  for entry in "${STEPS[@]}"; do
+    echo "${entry%%|*}"
   done
+}
 
+step_desc() {
+  local id="$1" entry
+  for entry in "${STEPS[@]}"; do
+    if [ "${entry%%|*}" = "$id" ]; then
+      echo "${entry#*|}"
+      return 0
+    fi
+  done
   return 1
 }
 
-geforce_now_installed() {
-  command -v geforcenow >/dev/null 2>&1 ||
-    command -v geforce-now >/dev/null 2>&1 ||
-    geforce_now_desktop_installed ||
-    { command -v flatpak >/dev/null 2>&1 && flatpak list --app --columns=application,name 2>/dev/null | grep -qi 'geforce.*now'; }
+list_steps() {
+  local entry id
+  echo "Available steps (run with: ./tailor.sh <step>...):"
+  echo ""
+  for entry in "${STEPS[@]}"; do
+    id="${entry%%|*}"
+    printf "  %-11s %s\n" "$id" "${entry#*|}"
+  done
 }
 
-ensure_omarchy_command() {
-  local label="$1" check_function="$2"
-  shift 2
+# Run the given step ids in registry order, keep going on failure, and
+# summarize at the end. A preflight failure aborts immediately — nothing
+# downstream is trustworthy without it.
+run_steps() {
+  local requested=("$@")
+  local entry id failed=() ran=()
 
-  if "$check_function"; then
-    echo "✓ $label already installed"
-  else
-    echo "Installing $label with Omarchy..."
-    omarchy "$@"
-  fi
-}
+  for entry in "${STEPS[@]}"; do
+    id="${entry%%|*}"
+    printf '%s\n' "${requested[@]}" | grep -qx "$id" || continue
 
-ensure_omarchy_install() {
-  local label="$1" check_function="$2"
-  shift 2
-
-  ensure_omarchy_command "$label" "$check_function" install "$@"
-}
-
-ensure_aur_install() {
-  local label="$1" check_function="$2"
-  shift 2
-
-  if "$check_function"; then
-    echo "✓ $label already installed"
-  else
-    echo "Installing $label from AUR..."
-    omarchy pkg aur add "$@"
-  fi
-}
-
-# Install optional Omarchy apps only when missing.
-ensure_omarchy_install "Dropbox" dropbox_installed dropbox
-ensure_omarchy_install "GeForce NOW" geforce_now_installed geforce now
-ensure_omarchy_install "Tailscale" tailscale_installed tailscale
-ensure_omarchy_command "Voxtype dictation" voxtype_installed voxtype install
-
-# Install optional AUR apps only when missing.
-ensure_aur_install "Vesktop" vesktop_installed vesktop
-
-# Ensure Kitty is installed and selected as the Omarchy terminal.
-omarchy install terminal kitty
-
-# Mailcatcher (idempotent — skip if container already exists)
-if ! docker ps -a --format '{{.Names}}' | grep -q '^mailcatcher$'; then
-  docker run -d --name mailcatcher -p 1025:1025 -p 1080:1080 dockage/mailcatcher:0.9.0
-fi
-
-# Generate ~/.config/hypr/envs.conf from 1Password (item: tailor-envs)
-"$SCRIPT_DIR/setup-envs.sh"
-
-# Generate ~/.ssh/config from 1Password (Server items tagged 'tailor-ssh')
-"$SCRIPT_DIR/setup-ssh.sh"
-
-# Set up zsh (omarchy-zsh package + template)
-"$SCRIPT_DIR/setup-zsh.sh"
-
-# Configure Pi (settings + extensions)
-"$SCRIPT_DIR/setup-pi.sh"
-
-# Install/maintain canonical AI skills allowlist
-"$SCRIPT_DIR/setup-ai-skills.sh"
-
-# Install internal CLIs (cortex, nebula, hey, fizzy, basecamp) + bundled skills
-"$SCRIPT_DIR/setup-cli-tools.sh"
-
-# Auth: write token configs from 1P + verify OAuth status for each CLI
-"$SCRIPT_DIR/setup-cli-auth.sh"
-
-# Codexbar (waybar wrapper for Codex/Claude usage)
-"$SCRIPT_DIR/setup-codexbar.sh"
-
-# Herdr terminal workspace manager config + Omarchy theme sync + layout plugin.
-"$SCRIPT_DIR/setup-herdr.sh"
-
-# Copy remaining ~/.config files (excluding directories that have their own setup scripts)
-mkdir -p ~/.config
-find config -type f \
-  ! -path "config/ssh/*" \
-  ! -path "config/opencode/*" \
-  ! -path "config/amp/*" \
-  ! -path "config/herdr/*" \
-  ! -path "config/omarchy/*" \
-  -exec sh -c 'mkdir -p ~/.config/$(dirname ${1#config/}) && cp "$1" ~/.config/${1#config/}' _ {} \;
-
-# Install custom scripts to ~/.local/bin
-mkdir -p ~/.local/bin
-for script in bin/*; do
-  if [ -f "$script" ]; then
-    cp "$script" ~/.local/bin/
-    chmod +x ~/.local/bin/$(basename "$script")
-    echo "✓ Installed $(basename "$script") to ~/.local/bin/"
-  fi
-done
-
-# Setup AI coding tools (OpenCode skills, MCP servers, etc.)
-"$SCRIPT_DIR/setup-ai.sh"
-
-# Legacy Hyprland .conf installs need windows.conf sourced explicitly. Modern
-# Omarchy uses hyprland.lua, so do not create a stale hyprland.conf on Lua-based
-# systems.
-if [ -f ~/.config/hypr/hyprland.conf ] && [ ! -f ~/.config/hypr/hyprland.lua ] && \
-   ! grep -q "source = ~/.config/hypr/windows.conf" ~/.config/hypr/hyprland.conf 2>/dev/null; then
-  echo "source = ~/.config/hypr/windows.conf" >> ~/.config/hypr/hyprland.conf
-fi
-
-# Check monitor resolution and adjust monitors.conf for 4K displays
-if pgrep -x Hyprland &> /dev/null; then
-  resolution=$(hyprctl monitors -j | jq -r '.[0] | "\(.width)x\(.height)"')
-  if [ "$resolution" = "3840x2160" ] && [ -f ~/.config/hypr/monitors.conf ]; then
-    sed -i 's/^# monitor=,preferred,auto,1.666667/monitor=,preferred,auto,1.666667/' ~/.config/hypr/monitors.conf
-    sed -i 's/^monitor=,preferred,auto,auto/# monitor=,preferred,auto,auto/' ~/.config/hypr/monitors.conf
-  fi
-fi
-
-# Link home directories to Dropbox
-for dir in Pictures Videos Documents; do
-  home_dir=~/"$dir"
-  dropbox_dir=~/Dropbox/"$dir"
-
-  if [ -d "$dropbox_dir" ]; then
-    if [ -e "$home_dir" ] && [ ! -L "$home_dir" ]; then
-      echo "Backing up ~/$dir to ~/${dir}.bak"
-      mv "$home_dir" "${home_dir}.bak"
-      ln -s "$dropbox_dir" "$home_dir"
-      echo "✓ Linked ~/$dir to ~/Dropbox/$dir"
-    elif [ ! -e "$home_dir" ]; then
-      ln -s "$dropbox_dir" "$home_dir"
-      echo "✓ Linked ~/$dir to ~/Dropbox/$dir"
+    hdr "tailor: $id"
+    ran+=("$id")
+    if "$SCRIPT_DIR/setup-$id.sh"; then
+      continue
+    elif [ "$id" = "preflight" ]; then
+      exit 1
     else
-      echo "✓ ~/$dir is already a symlink"
+      failed+=("$id")
+      warn "step '$id' failed — continuing with remaining steps"
     fi
+  done
+
+  hdr "tailor: summary"
+  if [ "${#failed[@]}" -gt 0 ]; then
+    fail "${#failed[@]}/${#ran[@]} step(s) failed: ${failed[*]}"
+    hint "Re-run just those: ./tailor.sh ${failed[*]}"
+    exit 1
   fi
-done
+  ok "${#ran[@]} step(s) completed: ${ran[*]}"
+}
+
+interactive_pick() {
+  local mode
+  mode=$(gum choose --header "Tailor — what do you want to run?" \
+    "Run everything" "Pick steps") || exit 0
+
+  if [ "$mode" = "Run everything" ]; then
+    run_steps $(step_ids)
+    return
+  fi
+
+  local entry choices=() picked
+  for entry in "${STEPS[@]}"; do
+    choices+=("$(printf '%-11s %s' "${entry%%|*}" "${entry#*|}")")
+  done
+
+  picked=$(gum choose --no-limit --height 20 \
+    --header "Select steps (space to toggle, enter to run)" \
+    "${choices[@]}") || exit 0
+
+  if [ -z "$picked" ]; then
+    echo "Nothing selected."
+    exit 0
+  fi
+
+  run_steps $(echo "$picked" | awk '{print $1}')
+}
+
+main() {
+  # Explicit args: list, all, or specific step ids.
+  if [ "$#" -gt 0 ]; then
+    case "$1" in
+      list | --list | -l)
+        list_steps
+        exit 0
+        ;;
+      all | --all)
+        run_steps $(step_ids)
+        exit 0
+        ;;
+      help | --help | -h)
+        sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+        exit 0
+        ;;
+    esac
+
+    local id
+    for id in "$@"; do
+      if ! step_desc "$id" >/dev/null; then
+        fail "unknown step: $id"
+        echo ""
+        list_steps
+        exit 1
+      fi
+    done
+    run_steps "$@"
+    exit
+  fi
+
+  # No args: gum picker when interactive, full run otherwise (CI/provisioning).
+  if [ -t 0 ] && [ -t 1 ] && command -v gum >/dev/null 2>&1; then
+    interactive_pick
+  else
+    run_steps $(step_ids)
+  fi
+}
+
+main "$@"

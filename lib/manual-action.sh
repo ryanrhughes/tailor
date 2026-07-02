@@ -1,7 +1,8 @@
 #!/bin/bash
 # Shared helper: pause for a manual action, then recheck via a verification
-# command. Source this from any setup-*.sh that has a step which can't be
-# scripted (e.g. an interactive TUI install).
+# command. Source this (after lib/common.sh, which provides ok/warn) from any
+# setup-*.sh that has a step which can't be scripted (e.g. an interactive
+# TUI install).
 #
 # Usage:
 #   prompt_manual_action "human-readable description" \

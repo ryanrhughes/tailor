@@ -27,13 +27,10 @@
 
 set -uo pipefail
 
-TAILOR_OP_ACCOUNT="${TAILOR_OP_ACCOUNT:-chamberofsecrets.1password.com}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
 
-hdr()  { echo ""; echo "=== $1 ==="; }
-ok()   { echo "  ✓ $1"; }
-info() { echo "  ℹ $1"; }
-warn() { echo "  ⚠ $1"; }
-hint() { echo "    $1"; }
+TAILOR_OP_ACCOUNT="${TAILOR_OP_ACCOUNT:-chamberofsecrets.1password.com}"
 
 field_value() {
   local json="$1" label="$2"

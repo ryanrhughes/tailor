@@ -19,15 +19,13 @@
 
 set -euo pipefail
 
-hdr()  { echo ""; echo "=== $1 ==="; }
-ok()   { echo "  ✓ $1"; }
-info() { echo "  ℹ $1"; }
-warn() { echo "  ⚠ $1"; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
 
 hdr "AI skills"
 
 if ! command -v npx >/dev/null 2>&1; then
-  warn "npx not in PATH — skills install skipped (run setup-ai-binaries.sh first)"
+  warn "npx not in PATH — skills install skipped (node/npm are preflight requirements)"
   exit 0
 fi
 

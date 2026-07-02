@@ -4,11 +4,10 @@
 
 set -euo pipefail
 
-removed_any=false
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
 
-hdr() { echo ""; echo "=== $1 ==="; }
-ok()  { echo "  ✓ $1"; }
-warn(){ echo "  ! $1"; }
+removed_any=false
 
 remove_path() {
   local path="$1"

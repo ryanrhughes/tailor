@@ -10,11 +10,8 @@
 
 set -euo pipefail
 
-hdr()  { echo ""; echo "=== $1 ==="; }
-ok()   { echo "  ✓ $1"; }
-info() { echo "  ℹ $1"; }
-warn() { echo "  ⚠ $1"; }
-hint() { echo "    $1"; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
 
 REPO_DIR="$HOME/Work/codexbar-waybar"
 

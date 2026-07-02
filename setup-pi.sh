@@ -4,22 +4,20 @@
 # Idempotent: safe to re-run.
 #
 # What this does:
-#   1. Verifies pi is installed (run setup-ai-binaries.sh first if not).
+#   1. Verifies pi is installed (run setup-ai.sh first if not).
 #   2. Writes ~/.pi/agent/settings.json defaults — only fills missing fields,
 #      so a user-changed provider/model is preserved across runs.
 #   3. Installs any canonical extensions that aren't already in settings.json.
 
 set -euo pipefail
 
-hdr()  { echo ""; echo "=== $1 ==="; }
-ok()   { echo "  ✓ $1"; }
-info() { echo "  ℹ $1"; }
-warn() { echo "  ⚠ $1"; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
 
 hdr "Pi"
 
 if ! command -v pi >/dev/null 2>&1; then
-  warn "pi not in PATH — run setup-ai-binaries.sh first (or migrate off non-canonical install)"
+  warn "pi not in PATH — run setup-ai.sh first (or migrate off non-canonical install)"
   exit 0
 fi
 
