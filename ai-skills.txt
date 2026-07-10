@@ -1,0 +1,15 @@
+# Canonical global AI skills.
+#
+#   + <source> [skills add options]  Install/update skills from a source.
+#   - <name>                         Remove a skill by name.
+#
+# Keep one operation per line. Blank lines and comments are ignored.
+
++ firecrawl/cli
++ ThinkOodle/rails-skills
++ https://github.com/anthropics/skills --skill skill-creator
++ https://github.com/steipete/agent-scripts/tree/main/skills/codex-first
++ https://github.com/stripe/ai/tree/main/skills/stripe-best-practices
+
+- find-skills
+- agent-browser

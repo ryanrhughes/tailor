@@ -1,26 +1,14 @@
 #!/bin/bash
-# Install/maintain the canonical AI skills allowlist.
-# Idempotent: safe to re-run.
-#
-# Universal skills (installed on every machine):
-#   - ThinkOodle/rails-skills    Rails dev (28 skills)
-#   - firecrawl/cli              Web ops, replaces WebFetch/WebSearch
-#   - skill-creator              Build/edit/test skills (Anthropic)
-#
-# Rejected (removed if found):
-#   - find-skills                Not needed
-#   - agent-browser              Replaced by chrome-devtools-mcp
-#
-# CLI-tied skills (cortex, nebula, hey, fizzy, basecamp) are installed by
-# their respective CLI tools and are not managed here.
-#
-# The skills CLI writes to ~/.agents/skills/ by default, which Claude Code,
-# Pi, and other harnesses pick up via their own resolution.
+# Reconcile the global AI skills listed in ai-skills.txt.
+# Idempotent: `skills add` updates existing skills and `skills remove` ignores
+# skills that are already absent.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
+
+SKILLS_MANIFEST="${AI_SKILLS_MANIFEST:-$SCRIPT_DIR/ai-skills.txt}"
 
 hdr "AI skills"
 
@@ -29,54 +17,58 @@ if ! command -v npx >/dev/null 2>&1; then
   exit 0
 fi
 
-# Get currently installed global skills (names only, ANSI-stripped).
-# Output format: indented "  <name> ~/.agents/skills/<name>" under category headers.
-# Use -y so npx fetches the skills CLI on first run instead of bailing.
-installed=$(npx -y skills list -g 2>&1 \
-  | sed 's/\x1b\[[0-9;]*m//g' \
-  | awk '/^[[:space:]]+[A-Za-z][A-Za-z0-9_-]* ~/{print $1}' || true)
+if [ ! -f "$SKILLS_MANIFEST" ]; then
+  fail "Skills manifest not found: $SKILLS_MANIFEST"
+  exit 1
+fi
 
-skill_present() {
-  echo "$installed" | grep -qx "$1"
-}
+line_number=0
+failures=0
+while IFS= read -r line || [ -n "$line" ]; do
+  ((line_number += 1))
 
-# --- Install canonical universal skills ---
-declare -A INSTALL=(
-  [firecrawl]="firecrawl/cli"
-  [rails-skills]="ThinkOodle/rails-skills"
-  # skill-creator lives in anthropics/skills repo; needs --skill subselection
-  [skill-creator]="https://github.com/anthropics/skills --skill skill-creator"
-)
+  fields=()
+  read -r -a fields <<< "$line"
+  [ "${#fields[@]}" -eq 0 ] && continue
+  [[ "${fields[0]}" == \#* ]] && continue
 
-for name in "${!INSTALL[@]}"; do
-  source="${INSTALL[$name]}"
-  # rails-skills installs many entries; check by sample name "active-storage"
-  marker="$name"
-  [ "$name" = "rails-skills" ] && marker="active-storage"
-
-  if skill_present "$marker"; then
-    ok "$name already installed"
-  else
-    info "Installing $name from $source..."
-    # shellcheck disable=SC2086
-    if npx skills add -g -y $source >/dev/null 2>&1; then
-      ok "$name installed"
-    else
-      warn "Failed to install $name"
-    fi
+  action="${fields[0]}"
+  if [ "${#fields[@]}" -lt 2 ]; then
+    warn "$SKILLS_MANIFEST:$line_number: missing source or skill name"
+    ((failures += 1))
+    continue
   fi
-done
 
-# --- Remove rejected skills ---
-REMOVE=(find-skills agent-browser)
+  case "$action" in
+    +)
+      source="${fields[1]}"
+      options=("${fields[@]:2}")
+      info "Syncing skills from $source..."
+      if npx -y skills add "$source" -g -y "${options[@]}" </dev/null >/dev/null 2>&1; then
+        ok "$source synced"
+      else
+        warn "Failed to sync skills from $source"
+        ((failures += 1))
+      fi
+      ;;
+    -)
+      name="${fields[1]}"
+      info "Ensuring $name is absent..."
+      if npx -y skills remove "$name" -g -y </dev/null >/dev/null 2>&1; then
+        ok "$name absent"
+      else
+        warn "Failed to remove $name"
+        ((failures += 1))
+      fi
+      ;;
+    *)
+      warn "$SKILLS_MANIFEST:$line_number: expected '+' or '-', got '$action'"
+      ((failures += 1))
+      ;;
+  esac
+done < "$SKILLS_MANIFEST"
 
-for name in "${REMOVE[@]}"; do
-  if skill_present "$name"; then
-    info "Removing $name..."
-    if npx skills remove "$name" -g -y >/dev/null 2>&1; then
-      ok "$name removed"
-    else
-      warn "Failed to remove $name (try: npx skills remove $name -g)"
-    fi
-  fi
-done
+if [ "$failures" -gt 0 ]; then
+  fail "$failures skill operation(s) failed"
+  exit 1
+fi
