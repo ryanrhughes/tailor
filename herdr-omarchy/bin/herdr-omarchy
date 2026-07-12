@@ -1,48 +1,41 @@
 #!/usr/bin/env bash
-# Omarchy-style Herdr layout actions.
-# Intended to run as a Herdr plugin command, but also works from a Herdr pane
-# when HERDR_PANE_ID/HERDR_TAB_ID/HERDR_WORKSPACE_ID are present.
 
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
 Usage: herdr-omarchy <hdl|hds|hdlm|hsl> [arguments]
+       hdl [ai-command] [second-ai-command]
+       hds [agent-command]
+       hdlm [ai-command] [second-ai-command]
+       hsl [pane-count] [command...]
 
 Layouts:
-  hdl [ai-command] [second-ai-command]
-      Herdr dev layout: current pane becomes editor; add bottom terminal and right AI pane.
-
-  hds [agent-command]
-      Herdr dev square: current pane becomes editor; add diff watch, terminal, and agent panes.
-
-  hdlm [ai-command] [second-ai-command]
-      Herdr dev-layout multi: create one hdl tab for each direct subdirectory of the current pane cwd.
-
-  hsl <pane-count> [command...]
-      Herdr swarm layout: tile N panes in the current tab and run the same command in each.
+  hdl   Editor, bottom terminal, and right AI pane.
+  hds   2x2 editor, diff, terminal, and agent layout.
+  hdlm  One hdl tab per direct subdirectory.
+  hsl   Tiled panes running the same command (default: 6 panes).
 
 Environment:
   HERDR_OMARCHY_EDITOR                 Editor command (default: EDITOR or nvim)
-  HERDR_OMARCHY_AI_COMMAND             AI command (default: omarchy-launch-ai --path .)
+  HERDR_OMARCHY_AI_COMMAND             AI command (default: opencode2)
   HERDR_OMARCHY_DIFF_COMMAND           hds diff command (default: hunk diff --watch)
   HERDR_OMARCHY_HDS_AGENT              hds agent command (default: AI command)
-  HERDR_OMARCHY_EDITOR_TERMINAL_RATIO  Existing editor share before bottom terminal (default: 0.85)
-  HERDR_OMARCHY_EDITOR_AI_RATIO        Existing editor share before right AI pane (default: 0.70)
-  HERDR_OMARCHY_AI_STACK_RATIO         Existing top AI share before second AI pane (default: 0.50)
-  HERDR_OMARCHY_SWARM_COUNT            Default hsl pane count when omitted (default: 6)
-  HERDR_OMARCHY_SWARM_COMMAND          Default hsl command when omitted (default: AI command)
+  HERDR_OMARCHY_EDITOR_TERMINAL_RATIO  Editor share above terminal (default: 0.85)
+  HERDR_OMARCHY_EDITOR_AI_RATIO        Editor share left of AI pane (default: 0.70)
+  HERDR_OMARCHY_AI_STACK_RATIO         First AI share above second AI (default: 0.50)
+  HERDR_OMARCHY_SWARM_COUNT            Default hsl pane count (default: 6)
+  HERDR_OMARCHY_SWARM_COMMAND          Default hsl command (default: AI command)
 EOF
 }
 
 fail() {
-  echo "herdr-omarchy: $*" >&2
+  printf 'herdr-omarchy: %s\n' "$*" >&2
   exit 1
 }
 
 require_command() {
-  local command_name=$1
-  command -v "$command_name" >/dev/null 2>&1 || fail "missing required command: $command_name"
+  command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
 shell_quote() {
@@ -51,8 +44,7 @@ shell_quote() {
 }
 
 in_cwd() {
-  local cwd=$1 command_text=$2
-  printf 'cd %s && %s' "$(shell_quote "$cwd")" "$command_text"
+  printf 'cd %s && %s' "$(shell_quote "$1")" "$2"
 }
 
 herdr_bin=${HERDR_BIN_PATH:-}
@@ -69,354 +61,335 @@ herdr_quiet() {
   "$herdr_bin" "$@" >/dev/null
 }
 
-herdr_capture() {
-  "$herdr_bin" "$@"
-}
-
 json_pane_id() {
   jq -r '.result.pane.pane_id // .result.pane_id // empty'
 }
 
-current_pane_json() {
-  local pane_id=$1
-  herdr_capture pane get "$pane_id"
-}
-
-pane_cwd_from_json() {
-  jq -r '
-    .result.pane.foreground_cwd //
-    .result.pane.cwd //
-    .result.foreground_cwd //
-    .result.cwd //
-    empty
-  '
-}
-
-current_root_pane() {
-  [[ -n ${HERDR_PANE_ID:-} ]] || fail "HERDR_PANE_ID is missing; run this as a Herdr plugin action or from inside a Herdr pane"
-  printf '%s' "$HERDR_PANE_ID"
-}
-
-current_workspace_id() {
-  local workspace_id
-
-  if [[ -n ${HERDR_WORKSPACE_ID:-} ]]; then
-    printf '%s' "$HERDR_WORKSPACE_ID"
-    return 0
-  fi
-
-  workspace_id=$(current_pane_json "$(current_root_pane)" | jq -r '.result.pane.workspace_id // .result.workspace_id // empty')
-  [[ -n $workspace_id ]] || fail "HERDR_WORKSPACE_ID is missing; run this as a Herdr plugin action from inside a workspace"
-  printf '%s' "$workspace_id"
-}
-
-current_tab_id() {
-  local tab_id
-
-  if [[ -n ${HERDR_TAB_ID:-} ]]; then
-    printf '%s' "$HERDR_TAB_ID"
-    return 0
-  fi
-
-  tab_id=$(current_pane_json "$(current_root_pane)" | jq -r '.result.pane.tab_id // .result.tab_id // empty')
-  [[ -n $tab_id ]] || fail "HERDR_TAB_ID is missing; run this as a Herdr plugin action from inside a tab"
-  printf '%s' "$tab_id"
-}
-
-current_cwd() {
-  local pane_json cwd
-
-  if [[ -n ${HERDR_OMARCHY_CWD:-} ]]; then
-    cwd=$(cd "$HERDR_OMARCHY_CWD" && pwd) || fail "HERDR_OMARCHY_CWD does not exist: $HERDR_OMARCHY_CWD"
-    printf '%s' "$cwd"
-    return 0
-  fi
-
-  pane_json=$(current_pane_json "$(current_root_pane)")
-  cwd=$(pane_cwd_from_json <<<"$pane_json")
-  [[ -n $cwd ]] || cwd=$PWD
-  printf '%s' "$cwd"
+json_tab_id() {
+  jq -r '.result.tab.tab_id // .result.tab_id // empty'
 }
 
 editor_command() {
-  printf '%s .' "${HERDR_OMARCHY_EDITOR:-${HERDR_DEV_EDITOR:-${EDITOR:-nvim}}}"
+  printf '%s .' "${HERDR_OMARCHY_EDITOR:-${EDITOR:-nvim}}"
 }
 
 default_ai_command() {
-  printf '%s' "${HERDR_OMARCHY_AI_COMMAND:-${HERDR_DEV_AI_COMMAND:-omarchy-launch-ai --path .}}"
+  printf '%s' "${HERDR_OMARCHY_AI_COMMAND:-opencode2}"
+}
+
+plugin_mode=false
+[[ -n ${HERDR_PLUGIN_ID:-} ]] && plugin_mode=true
+
+invocation_pane=${HERDR_PANE_ID:-}
+workspace_id=
+tab_id=
+project_dir=
+pane_json=
+
+resolve_context() {
+  local context_json=${HERDR_PLUGIN_CONTEXT_JSON:-{}}
+
+  [[ ${HERDR_ENV:-} == 1 ]] || fail "run this as a Herdr plugin action or from inside a Herdr pane"
+  [[ -n $invocation_pane ]] || fail "HERDR_PANE_ID is missing"
+
+  if ! pane_json=$(herdr pane get "$invocation_pane"); then
+    fail "pane $invocation_pane no longer exists; open a new shell in the current Herdr session"
+  fi
+
+  workspace_id=$(jq -r '.result.pane.workspace_id // .result.workspace_id // empty' <<<"$pane_json")
+  tab_id=$(jq -r '.result.pane.tab_id // .result.tab_id // empty' <<<"$pane_json")
+  [[ -n $workspace_id ]] || fail "could not resolve the workspace for pane $invocation_pane"
+  [[ -n $tab_id ]] || fail "could not resolve the tab for pane $invocation_pane"
+
+  if [[ $plugin_mode == true ]]; then
+    project_dir=$(jq -r '
+      .result.pane.foreground_cwd //
+      .result.pane.cwd //
+      .result.foreground_cwd //
+      .result.cwd //
+      empty
+    ' <<<"$pane_json")
+    if [[ -z $project_dir ]]; then
+      project_dir=$(jq -r '.focused_pane_cwd // .workspace_cwd // empty' <<<"$context_json")
+    fi
+  else
+    project_dir=$(pwd -P)
+  fi
+
+  [[ -n $project_dir && -d $project_dir ]] || fail "could not resolve a valid working directory"
+  project_dir=$(cd "$project_dir" && pwd -P)
+}
+
+tab_pane_count() {
+  local target_tab=$1 tab_json count
+  tab_json=$(herdr tab get "$target_tab")
+  count=$(jq -r '.result.tab.pane_count // .result.pane_count // 0' <<<"$tab_json")
+  [[ $count =~ ^[0-9]+$ ]] || count=0
+  printf '%s' "$count"
+}
+
+require_empty_layout() {
+  local count
+  count=$(tab_pane_count "$tab_id")
+  [[ $count == 1 ]] || fail "tab $tab_id already has $count panes; run this layout from a tab with one shell pane"
 }
 
 split_pane() {
-  local target=$1 direction=$2 cwd=$3 ratio=${4:-}
-  local -a args
-
-  args=(pane split "$target" --direction "$direction" --cwd "$cwd" --no-focus)
-  if [[ -n $ratio ]]; then
-    args+=(--ratio "$ratio")
-  fi
-
-  herdr_capture "${args[@]}" | json_pane_id
-}
-
-run_in_pane() {
-  local pane_id=$1 command_text=${2:-}
-  [[ -n $command_text ]] || return 0
-  herdr_quiet pane run "$pane_id" "$command_text"
+  local target=$1 direction=$2 cwd=$3 ratio=$4 response pane_id
+  response=$(herdr pane split "$target" --direction "$direction" --cwd "$cwd" --ratio "$ratio" --no-focus)
+  pane_id=$(json_pane_id <<<"$response")
+  [[ -n $pane_id ]] || fail "Herdr did not return a pane id after splitting $target $direction"
+  printf '%s' "$pane_id"
 }
 
 rename_pane() {
-  local pane_id=$1 label=$2
-  herdr_quiet pane rename "$pane_id" "$label" || true
+  herdr_quiet pane rename "$1" "$2"
 }
 
 rename_tab() {
-  local tab_id=$1 label=$2
-  herdr_quiet tab rename "$tab_id" "$label" || true
+  herdr_quiet tab rename "$1" "$2"
 }
 
-rename_current_tab_for_dir() {
-  local dir=$1 tab_id
-  tab_id=$(current_tab_id)
-  rename_tab "$tab_id" "$(basename "$dir")"
+wait_for_shell() {
+  local pane_id=$1 process_json attempt
+  for ((attempt = 0; attempt < 100; attempt++)); do
+    if process_json=$(herdr pane process-info --pane "$pane_id" 2>/dev/null) &&
+      jq -e '
+        .result.process_info as $process |
+        ($process.shell_pid != null) and
+        ($process.foreground_processes | length == 1) and
+        ($process.foreground_processes[0].pid == $process.shell_pid)
+      ' >/dev/null <<<"$process_json"; then
+      return
+    fi
+    sleep 0.05
+  done
+  fail "pane $pane_id did not become ready for a startup command"
 }
 
-bootstrap_hdl_in_pane() {
+run_in_pane() {
+  local pane_id=$1 cwd=$2 command_text=${3:-}
+  [[ -n $command_text ]] || return 0
+  wait_for_shell "$pane_id"
+  herdr_quiet pane run "$pane_id" "$(in_cwd "$cwd" "$command_text")"
+}
+
+require_source_shell() {
+  [[ $plugin_mode == false ]] || wait_for_shell "$invocation_pane"
+}
+
+deferred_cwd=
+deferred_command=
+
+run_or_defer_in_source_pane() {
+  local pane_id=$1 cwd=$2 command_text=$3
+  if [[ $plugin_mode == false && $pane_id == "$invocation_pane" ]]; then
+    deferred_cwd=$cwd
+    deferred_command=$command_text
+  else
+    run_in_pane "$pane_id" "$cwd" "$command_text"
+  fi
+}
+
+bootstrap_hdl() {
   local dir=$1 editor_pane=$2 ai_command=$3 second_ai_command=${4:-}
   local terminal_pane ai_pane ai2_pane
 
-  terminal_pane=$(split_pane "$editor_pane" down "$dir" "${HERDR_OMARCHY_EDITOR_TERMINAL_RATIO:-${HERDR_DEV_EDITOR_TERMINAL_RATIO:-0.85}}")
-  ai_pane=$(split_pane "$editor_pane" right "$dir" "${HERDR_OMARCHY_EDITOR_AI_RATIO:-${HERDR_DEV_EDITOR_AI_RATIO:-0.70}}")
+  terminal_pane=$(split_pane "$editor_pane" down "$dir" "${HERDR_OMARCHY_EDITOR_TERMINAL_RATIO:-0.85}")
+  ai_pane=$(split_pane "$editor_pane" right "$dir" "${HERDR_OMARCHY_EDITOR_AI_RATIO:-0.70}")
 
   rename_pane "$editor_pane" editor
   rename_pane "$terminal_pane" terminal
-  rename_pane "$ai_pane" "$ai_command"
+  rename_pane "$ai_pane" ai
 
   if [[ -n $second_ai_command ]]; then
-    ai2_pane=$(split_pane "$ai_pane" down "$dir" "${HERDR_OMARCHY_AI_STACK_RATIO:-${HERDR_DEV_AI_STACK_RATIO:-0.50}}")
-    rename_pane "$ai2_pane" "$second_ai_command"
-    run_in_pane "$ai2_pane" "$(in_cwd "$dir" "$second_ai_command")"
+    ai2_pane=$(split_pane "$ai_pane" down "$dir" "${HERDR_OMARCHY_AI_STACK_RATIO:-0.50}")
+    rename_pane "$ai2_pane" ai-2
+    run_in_pane "$ai2_pane" "$dir" "$second_ai_command"
   fi
 
-  run_in_pane "$ai_pane" "$(in_cwd "$dir" "$ai_command")"
-  run_in_pane "$editor_pane" "$(in_cwd "$dir" "$(editor_command)")"
-
-  printf 'created hdl layout in %s\n' "$dir"
-  printf '  editor:   %s\n' "$editor_pane"
-  printf '  terminal: %s\n' "$terminal_pane"
-  printf '  ai:       %s\n' "$ai_pane"
+  run_in_pane "$ai_pane" "$dir" "$ai_command"
+  run_or_defer_in_source_pane "$editor_pane" "$dir" "$(editor_command)"
 }
 
 layout_hdl() {
-  local dir root_pane ai_command second_ai_command
+  local ai_command second_ai_command
+  (( $# <= 2 )) || fail "hdl expects at most two command strings"
+  require_source_shell
+  require_empty_layout
 
-  if (( $# > 2 )); then
-    fail "hdl expects at most two command strings"
-  fi
-
-  root_pane=$(current_root_pane)
-  dir=$(current_cwd)
   ai_command=${1:-$(default_ai_command)}
   second_ai_command=${2:-}
-
-  rename_current_tab_for_dir "$dir"
-  bootstrap_hdl_in_pane "$dir" "$root_pane" "$ai_command" "$second_ai_command"
+  rename_tab "$tab_id" "$(basename "$project_dir")"
+  bootstrap_hdl "$project_dir" "$invocation_pane" "$ai_command" "$second_ai_command"
+  printf 'created hdl layout in %s\n' "$project_dir"
 }
 
 layout_hds() {
-  local dir editor_pane terminal_pane diff_pane agent_pane diff_command agent_command
+  local editor_pane=$invocation_pane terminal_pane diff_pane agent_pane diff_command agent_command
+  (( $# <= 1 )) || fail "hds expects at most one agent command"
+  require_source_shell
+  require_empty_layout
 
-  if (( $# > 1 )); then
-    fail "hds expects at most one optional agent command"
-  fi
-
-  editor_pane=$(current_root_pane)
-  dir=$(current_cwd)
-  rename_current_tab_for_dir "$dir"
-
-  terminal_pane=$(split_pane "$editor_pane" down "$dir" "0.50")
-  diff_pane=$(split_pane "$editor_pane" right "$dir" "0.50")
-  agent_pane=$(split_pane "$terminal_pane" right "$dir" "0.50")
-
-  diff_command=${HERDR_OMARCHY_DIFF_COMMAND:-${HERDR_DEV_DIFF_COMMAND:-hunk diff --watch}}
+  terminal_pane=$(split_pane "$editor_pane" down "$project_dir" 0.50)
+  diff_pane=$(split_pane "$editor_pane" right "$project_dir" 0.50)
+  agent_pane=$(split_pane "$terminal_pane" right "$project_dir" 0.50)
+  diff_command=${HERDR_OMARCHY_DIFF_COMMAND:-hunk diff --watch}
   agent_command=${1:-${HERDR_OMARCHY_HDS_AGENT:-$(default_ai_command)}}
 
+  rename_tab "$tab_id" "$(basename "$project_dir")"
   rename_pane "$editor_pane" editor
   rename_pane "$terminal_pane" terminal
   rename_pane "$diff_pane" diff
-  rename_pane "$agent_pane" "$agent_command"
-
-  run_in_pane "$editor_pane" "$(in_cwd "$dir" "$(editor_command)")"
-  run_in_pane "$diff_pane" "$(in_cwd "$dir" "$diff_command")"
-  run_in_pane "$agent_pane" "$(in_cwd "$dir" "$agent_command")"
-
-  printf 'created hds layout in %s\n' "$dir"
+  rename_pane "$agent_pane" agent
+  run_in_pane "$diff_pane" "$project_dir" "$diff_command"
+  run_in_pane "$agent_pane" "$project_dir" "$agent_command"
+  run_or_defer_in_source_pane "$editor_pane" "$project_dir" "$(editor_command)"
+  printf 'created hds layout in %s\n' "$project_dir"
 }
 
 find_tab_id() {
-  local workspace_id=$1 label=$2
-  herdr_capture tab list --workspace "$workspace_id" | jq -r --arg label "$label" '
+  herdr tab list --workspace "$workspace_id" | jq -r --arg label "$1" '
     first(.result.tabs[]? | select(.label == $label) | .tab_id) // empty
   '
 }
 
-create_tab_for_dir() {
-  local workspace_id=$1 dir=$2 label=$3 ai_command=$4 second_ai_command=${5:-}
-  local existing_tab_id tab_json tab_id root_pane
-
-  existing_tab_id=$(find_tab_id "$workspace_id" "$label")
-  if [[ -n $existing_tab_id ]]; then
-    printf '  ✓ %s already exists\n' "$label" >&2
-    printf '%s' "$existing_tab_id"
-    return 0
-  fi
-
-  tab_json=$(herdr_capture tab create --workspace "$workspace_id" --cwd "$dir" --label "$label" --no-focus)
-  tab_id=$(jq -r '.result.tab.tab_id // empty' <<<"$tab_json")
-  root_pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$tab_json")
-
-  [[ -n $tab_id ]] || fail "failed to read tab id for $label"
-  [[ -n $root_pane ]] || fail "failed to read root pane id for $label"
-
-  bootstrap_hdl_in_pane "$dir" "$root_pane" "$ai_command" "$second_ai_command" >&2
-  printf '%s' "$tab_id"
+create_tab() {
+  local dir=$1 label=$2 response created_tab root_pane
+  response=$(herdr tab create --workspace "$workspace_id" --cwd "$dir" --label "$label" --no-focus)
+  created_tab=$(json_tab_id <<<"$response")
+  root_pane=$(jq -r '.result.root_pane.pane_id // empty' <<<"$response")
+  [[ -n $created_tab && -n $root_pane ]] || fail "Herdr did not return a tab and root pane for $label"
+  printf '%s\t%s' "$created_tab" "$root_pane"
 }
 
 layout_hdlm() {
-  local base_dir workspace_id first_tab_id current_tab root_pane ai_command second_ai_command created_count dir label tab_id
+  local ai_command second_ai_command first=true
+  local dir label existing existing_count created root_pane count=0
+  (( $# <= 2 )) || fail "hdlm expects at most two command strings"
+  require_source_shell
+  require_empty_layout
 
-  if (( $# > 2 )); then
-    fail "hdlm expects at most two command strings"
-  fi
-
-  base_dir=$(current_cwd)
-  workspace_id=$(current_workspace_id)
-  current_tab=$(current_tab_id)
-  root_pane=$(current_root_pane)
   ai_command=${1:-$(default_ai_command)}
   second_ai_command=${2:-}
-  first_tab_id=
-  created_count=0
-
-  herdr_quiet workspace rename "$workspace_id" "$(basename "$base_dir" | tr '.:' '--')" || true
 
   shopt -s nullglob
-  for dir in "$base_dir"/*/; do
+  for dir in "$project_dir"/*/; do
     [[ -d $dir ]] || continue
     dir=${dir%/}
     label=$(basename "$dir")
 
-    if (( created_count == 0 )); then
-      rename_tab "$current_tab" "$label"
-      bootstrap_hdl_in_pane "$dir" "$root_pane" "$ai_command" "$second_ai_command" >&2
-      first_tab_id=$current_tab
-    else
-      tab_id=$(create_tab_for_dir "$workspace_id" "$dir" "$label" "$ai_command" "$second_ai_command")
-      [[ -n $first_tab_id ]] || first_tab_id=$tab_id
+    if [[ $first == true ]]; then
+      rename_tab "$tab_id" "$label"
+      bootstrap_hdl "$dir" "$invocation_pane" "$ai_command" "$second_ai_command"
+      first=false
+      printf 'created hdlm tab %s\n' "$label"
+      count=$((count + 1))
+      continue
     fi
 
-    printf '  ✓ %s\n' "$label"
-    created_count=$((created_count + 1))
+    existing=$(find_tab_id "$label")
+
+    if [[ -n $existing ]]; then
+      existing_count=$(tab_pane_count "$existing")
+      if [[ $existing_count == 1 ]]; then
+        root_pane=$(herdr pane list --workspace "$workspace_id" | jq -r --arg tab "$existing" '
+          first(.result.panes[]? | select(.tab_id == $tab) | .pane_id) // empty
+        ')
+        [[ -n $root_pane ]] || fail "could not find the root pane for tab $existing"
+        bootstrap_hdl "$dir" "$root_pane" "$ai_command" "$second_ai_command"
+      fi
+      printf 'kept hdlm tab %s\n' "$label"
+      count=$((count + 1))
+      continue
+    fi
+
+    created=$(create_tab "$dir" "$label")
+    IFS=$'\t' read -r _ root_pane <<<"$created"
+    bootstrap_hdl "$dir" "$root_pane" "$ai_command" "$second_ai_command"
+
+    printf 'created hdlm tab %s\n' "$label"
+    count=$((count + 1))
   done
 
-  if (( created_count == 0 )); then
-    fail "no direct subdirectories under $base_dir"
-  fi
-
-  if [[ -n $first_tab_id ]]; then
-    herdr_quiet tab focus "$first_tab_id" || true
-  fi
-
-  printf 'created hdlm workspace layout for %s (%d tabs)\n' "$base_dir" "$created_count"
+  (( count > 0 )) || fail "no direct subdirectories under $project_dir"
+  printf 'prepared hdlm layout for %s (%d tabs)\n' "$project_dir" "$count"
 }
 
 swarm_panes=()
-split_swarm_group() {
-  local pane_id=$1 count=$2 direction=$3 cwd=$4
-  local first_count second_count ratio new_pane next_direction
 
+split_swarm_group() {
+  local pane_id=$1 count=$2 direction=$3
+  local first_count second_count ratio new_pane next_direction
   if (( count <= 1 )); then
     swarm_panes+=("$pane_id")
-    return 0
+    return
   fi
 
   first_count=$(((count + 1) / 2))
   second_count=$((count - first_count))
   ratio=$(awk -v first="$first_count" -v total="$count" 'BEGIN { printf "%.6f", first / total }')
-
-  new_pane=$(split_pane "$pane_id" "$direction" "$cwd" "$ratio")
-  if [[ $direction == right ]]; then
-    next_direction=down
-  else
-    next_direction=right
-  fi
-
-  split_swarm_group "$pane_id" "$first_count" "$next_direction" "$cwd"
-  split_swarm_group "$new_pane" "$second_count" "$next_direction" "$cwd"
+  new_pane=$(split_pane "$pane_id" "$direction" "$project_dir" "$ratio")
+  [[ $direction == right ]] && next_direction=down || next_direction=right
+  split_swarm_group "$pane_id" "$first_count" "$next_direction"
+  split_swarm_group "$new_pane" "$second_count" "$next_direction"
 }
 
 layout_hsl() {
-  local dir root_pane count command_text index pane_id
+  local count command_text index=1 pane_id
+  require_command awk
+  require_source_shell
+  require_empty_layout
 
-  count=${1:-${HERDR_OMARCHY_SWARM_COUNT:-${HERDR_DEV_SWARM_COUNT:-6}}}
-  if [[ $# -gt 0 ]]; then
-    shift
-  fi
+  count=${1:-${HERDR_OMARCHY_SWARM_COUNT:-6}}
+  (( $# == 0 )) || shift
+  [[ $count =~ ^[0-9]+$ ]] && (( count > 0 )) || fail "hsl pane count must be a positive integer"
+  command_text=${*:-${HERDR_OMARCHY_SWARM_COMMAND:-$(default_ai_command)}}
 
-  if ! [[ $count =~ ^[0-9]+$ ]] || (( count < 1 )); then
-    fail "hsl pane count must be a positive integer"
-  fi
-
-  if (( $# > 0 )); then
-    command_text="$*"
-  else
-    command_text=${HERDR_OMARCHY_SWARM_COMMAND:-${HERDR_DEV_SWARM_COMMAND:-$(default_ai_command)}}
-  fi
-
-  root_pane=$(current_root_pane)
-  dir=$(current_cwd)
-  rename_current_tab_for_dir "$dir"
-
+  rename_tab "$tab_id" "$(basename "$project_dir")"
   swarm_panes=()
-  split_swarm_group "$root_pane" "$count" right "$dir"
-
-  index=1
+  split_swarm_group "$invocation_pane" "$count" right
   for pane_id in "${swarm_panes[@]}"; do
     rename_pane "$pane_id" "swarm-$index"
-    run_in_pane "$pane_id" "$(in_cwd "$dir" "$command_text")"
+    run_or_defer_in_source_pane "$pane_id" "$project_dir" "$command_text"
     index=$((index + 1))
   done
-
-  printf 'created hsl swarm in %s (%d panes)\n' "$dir" "$count"
+  printf 'created hsl layout in %s (%d panes)\n' "$project_dir" "$count"
 }
 
 main() {
-  local command=${1:-}
-  [[ -n $command ]] || { usage >&2; exit 1; }
-  shift || true
-
-  require_command jq
-  require_command awk
-
-  case $command in
-    hdl)
-      layout_hdl "$@"
-      ;;
-    hds)
-      layout_hds "$@"
-      ;;
-    hdlm)
-      layout_hdlm "$@"
-      ;;
-    hsl)
-      layout_hsl "$@"
-      ;;
-    -h|--help|help)
-      usage
+  local program=${0##*/} command
+  case $program in
+    hdl|hds|hdlm|hsl)
+      command=$program
+      if [[ ${1:-} == -h || ${1:-} == --help || ${1:-} == help ]]; then
+        usage
+        return
+      fi
       ;;
     *)
-      fail "unknown layout: $command"
+      command=${1:-}
+      [[ -n $command ]] || { usage >&2; exit 1; }
+      shift
       ;;
   esac
+
+  case $command in
+    -h|--help|help)
+      usage
+      return
+      ;;
+    hdl|hds|hdlm|hsl) ;;
+    *) fail "unknown layout: $command" ;;
+  esac
+
+  require_command jq
+  resolve_context
+  "layout_$command" "$@"
+
+  if [[ -n $deferred_command ]]; then
+    exec "${SHELL:-/bin/bash}" -lc "$(in_cwd "$deferred_cwd" "$deferred_command")"
+  fi
 }
 
 main "$@"

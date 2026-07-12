@@ -123,7 +123,7 @@ install_herdr_omarchy_plugin() {
 }
 
 install_herdr_omarchy_commands() {
-  local command target wrapper
+  local command target source
 
   if [[ ! -x $HERDR_OMARCHY_PLUGIN_SOURCE/bin/herdr-omarchy ]]; then
     warn "Missing Herdr Omarchy command implementation: $HERDR_OMARCHY_PLUGIN_SOURCE/bin/herdr-omarchy"
@@ -131,30 +131,15 @@ install_herdr_omarchy_commands() {
   fi
 
   mkdir -p "$HOME/.local/bin"
+  source="$HERDR_OMARCHY_PLUGIN_SOURCE/bin/herdr-omarchy"
   for command in "${HERDR_OMARCHY_COMMANDS[@]}"; do
     target="$HOME/.local/bin/$command"
-    wrapper=$(cat <<EOF
-#!/usr/bin/env bash
-# Tailor-managed dispatcher for the herdr-omarchy plugin.
-# The layout implementation lives in the plugin; this command only preserves the
-# fast shell workflow for Herdr-specific h* names and leaves tmux t* names alone.
-set -euo pipefail
-
-if [[ -z \${HERDR_ENV:-} || -z \${HERDR_PANE_ID:-} ]]; then
-  echo "$command: run this from inside a Herdr pane (start Herdr with: herdr)" >&2
-  exit 1
-fi
-
-export HERDR_OMARCHY_CWD="\$PWD"
-exec "$HERDR_OMARCHY_PLUGIN_SOURCE/bin/herdr-omarchy" "$command" "\$@"
-EOF
-)
-    if [[ ! -f $target ]] || [[ $(<"$target") != "$wrapper" ]]; then
-      printf '%s\n' "$wrapper" >"$target"
-      chmod 0755 "$target"
-      ok "Installed $command dispatcher to $target"
+    if [[ ! -L $target || $(readlink "$target") != "$source" ]]; then
+      rm -f "$target"
+      ln -s "$source" "$target"
+      ok "Linked $command to $source"
     else
-      ok "$command dispatcher already installed"
+      ok "$command already linked"
     fi
   done
 }
