@@ -2,6 +2,11 @@
 # Reconcile the global AI skills listed in ai-skills.txt.
 # Idempotent: `skills add` updates existing skills and `skills remove` ignores
 # skills that are already absent.
+#
+# Local skills vendored in this repo under skills/ (e.g. cli-design) are
+# symlinked as canonical into ~/.agents/skills, with harness links for
+# Claude Code (~/.claude/skills) and Pi (~/.pi/agent/skills), so `git pull`
+# updates them in place on every machine.
 
 set -euo pipefail
 
@@ -67,6 +72,44 @@ while IFS= read -r line || [ -n "$line" ]; do
       ;;
   esac
 done < "$SKILLS_MANIFEST"
+
+# --- Local skills vendored in this repo ---
+# Canonical install is a symlink to the repo copy: skills stay current with
+# git pull, and edits to the live skill land in the repo, not a stray copy.
+LOCAL_SKILLS=(cli-design)
+
+SKILLS_DIR="$HOME/.agents/skills"
+CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
+PI_SKILLS_DIR="$HOME/.pi/agent/skills"
+mkdir -p "$SKILLS_DIR" "$CLAUDE_SKILLS_DIR" "$PI_SKILLS_DIR"
+
+# Symlink $2 -> $1 unless $2 is already a real file/dir (never clobber content).
+link_skill() {
+  local target="$1" dest="$2"
+  if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+    warn "$dest exists and is not a symlink — move it aside and re-run"
+    return 1
+  fi
+  ln -sfn "$target" "$dest"
+}
+
+for name in "${LOCAL_SKILLS[@]}"; do
+  src="$SCRIPT_DIR/skills/$name"
+  if [ ! -d "$src" ]; then
+    warn "$name not found at $src — repo checkout incomplete?"
+    ((failures += 1))
+    continue
+  fi
+  linked=1
+  link_skill "$src" "$SKILLS_DIR/$name" || linked=0
+  link_skill "../../.agents/skills/$name" "$CLAUDE_SKILLS_DIR/$name" || linked=0
+  link_skill "../../../.agents/skills/$name" "$PI_SKILLS_DIR/$name" || linked=0
+  if [ "$linked" = 1 ]; then
+    ok "$name linked (canonical + claude + pi)"
+  else
+    ((failures += 1))
+  fi
+done
 
 if [ "$failures" -gt 0 ]; then
   fail "$failures skill operation(s) failed"

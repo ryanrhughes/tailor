@@ -1,0 +1,66 @@
+{
+  "skill_name": "cli-design",
+  "evals": [
+    {
+      "id": 0,
+      "name": "build-api-cli",
+      "prompt": "We need a new CLI tool in Go called `postal` that wraps the JSONPlaceholder API (https://jsonplaceholder.typicode.com) \u2014 specifically the /posts resource: list, show, create, update, delete. Both humans on a terminal and AI agents will use it heavily. Build it in the current directory. Make sure it builds with `go build`.",
+      "expected_output": "A Go/cobra CLI with noun-verb commands (post list/show/create/update/delete), --json support with clean stdout, errors+progress on stderr, typed exit codes, actionable errors, config via env with documented precedence, examples in help, and ideally agent features (SKILL.md, --limit, PATCH via Changed()).",
+      "files": [],
+      "assertions": [
+        "Project compiles: `go build` succeeds in the output directory",
+        "JSON output mode exists (--json flag or TTY auto-detection) on the data commands",
+        "stdout/stderr discipline: in JSON/piped mode stdout carries only the JSON payload; progress, status and errors go to stderr",
+        "Exit codes are differentiated beyond 0/1 (distinct codes for e.g. usage vs not-found vs network/API, documented somewhere)",
+        "Command grammar is noun-verb (e.g. `postal post list`) with standard CRUD verbs, not ad-hoc names",
+        "Error messages are actionable (say what to do next, not just what failed)",
+        "Update sends only fields the user set (flag Changed() gating or equivalent PATCH semantics)",
+        "Leaf commands include usage examples in help output",
+        "HTTP client sets a User-Agent header and a request timeout",
+        "List command has pagination/limit control (--limit, --all, or similar) rather than always dumping everything",
+        "At least one deliberate agent affordance beyond --json (SKILL.md, --ids-only, --count, --quiet, breadcrumbs, or commands catalog)"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "review-flawed-cli",
+      "prompt": "Can you review the design of my taskr CLI (main.go in the current directory)? It's a Go CLI for our internal Taskr task API. My teammates complain it's annoying to script against and our AI agents keep failing when they try to use it. Give me a prioritized list of design problems and how to fix each.",
+      "expected_output": "A review catching: API key required via flag (ps/history leak, no env fallback), key leaked in URL query string, http:// not https, errors printed to stdout, exit codes all 0/1 with no differentiation, unconditional interactive prompts that hang/fail when piped or run by agents, no --json / machine output, ANSI color+box-drawing always on (no TTY detection, no NO_COLOR), inconsistent command grammar (list-tasks vs task-create vs remove), no -h/--help flag support, unchecked JSON decode errors, JSON body built by string concatenation (injection), no confirmation bypass flag, no User-Agent, no timeouts.",
+      "files": [
+        "/home/ryan/.claude/skills/cli-design-workspace/fixtures/taskr/main.go"
+      ],
+      "assertions": [
+        "Catches the API key passed via --api-key flag (leaks via ps/shell history) and recommends env var / token file / keyring",
+        "Catches the API key leaking in the URL query string (?key=...) and/or plain http:// transport",
+        "Catches errors being printed to stdout instead of stderr",
+        "Catches the unconditional interactive prompts (title prompt, y/n confirm) that hang or fail when piped / run by agents, and recommends TTY detection plus flag alternatives (--title, --force/--yes)",
+        "Catches the absence of any machine-readable output (--json) and recommends adding it",
+        "Catches always-on ANSI colors / box-drawing decoration with no TTY detection or NO_COLOR support",
+        "Catches the inconsistent command grammar (list-tasks vs task-create vs remove) and recommends a consistent noun-verb scheme",
+        "Catches undifferentiated exit codes (everything is 0 or 1)",
+        "Catches the JSON request body built by string concatenation (injection/escaping bug) and recommends json.Marshal",
+        "Catches missing HTTP timeouts and/or missing User-Agent",
+        "Catches missing -h/--help flag handling (only a bare 'help' command)",
+        "The review is prioritized (ordered by severity/impact) and each problem comes with a concrete fix"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "input-and-safety-advice",
+      "prompt": "Two design questions about my `memo` CLI (Go, cobra). 1) I'm adding `memo add` for creating a note \u2014 what are all the ways it should accept the note text, and in what priority? 2) `memo delete <id>` currently asks 'are you sure? (y/n)' \u2014 our CI scripts and Claude keep getting stuck on it. What's the right confirmation design?",
+      "expected_output": "1) The resolution chain: named flag (--content/-c or --title/-t), positional shorthand, stdin when piped, $EDITOR when interactive; flag+positional conflict is an error; missing-input error shows both forms. 2) Prompt only when stdin is a TTY; non-TTY fails fast naming the bypass flag; provide --force/--yes; severity tiering with typed-name --confirm for severe deletes; mention --dry-run.",
+      "files": [],
+      "assertions": [
+        "Gives the full input resolution chain in the right priority order: named flag first, then positional shorthand, then stdin when piped, then $EDITOR when interactive",
+        "Recommends a semantic flag name with short form (e.g. --content/-c or --message/-m), not a generic one-off",
+        "States that flag + positional both provided should be an error, not silently resolved",
+        "States that the missing-input error should show both invocation forms (positional and flag)",
+        "Confirmation design: prompt only when stdin is a TTY; when non-interactive, fail fast with an error naming the bypass flag rather than hanging",
+        "Provides a --force or --yes bypass flag for scripts/agents",
+        "Mentions severity tiering and/or typed-name confirmation (--confirm \"<name>\") for destructive deletes",
+        "Mentions --dry-run as a preview mechanism",
+        "Includes concrete, correct Go/cobra code implementing the input chain and/or TTY-aware confirmation"
+      ]
+    }
+  ]
+}
