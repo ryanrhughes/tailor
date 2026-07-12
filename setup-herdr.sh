@@ -19,6 +19,7 @@ HOOK_TARGET="$HOME/.config/omarchy/hooks/theme-set.d/sync-herdr"
 
 HERDR_OMARCHY_PLUGIN_ID="herdr-omarchy"
 HERDR_OMARCHY_PLUGIN_SOURCE="$SCRIPT_DIR/herdr-omarchy"
+HERDR_OMARCHY_CONFIG_SOURCE="$HERDR_OMARCHY_PLUGIN_SOURCE/config.example.toml"
 HERDR_OMARCHY_COMMANDS=(hdl hds hdlm hsl)
 
 CURRENT_THEME_FRAGMENTS=(
@@ -144,6 +145,27 @@ install_herdr_omarchy_commands() {
   done
 }
 
+install_herdr_omarchy_config() {
+  local config_dir config_target
+
+  [[ -f $HERDR_OMARCHY_CONFIG_SOURCE ]] || {
+    warn "Missing Herdr Omarchy config template: $HERDR_OMARCHY_CONFIG_SOURCE"
+    return 1
+  }
+
+  config_dir=$(herdr plugin config-dir "$HERDR_OMARCHY_PLUGIN_ID" 2>/dev/null) || {
+    warn "Could not resolve the $HERDR_OMARCHY_PLUGIN_ID config directory"
+    return 1
+  }
+  config_target="$config_dir/config.toml"
+  if [[ -f $config_target ]]; then
+    ok "Preserved Herdr Omarchy config at $config_target"
+  else
+    install -m 0644 "$HERDR_OMARCHY_CONFIG_SOURCE" "$config_target"
+    ok "Installed Herdr Omarchy config to $config_target"
+  fi
+}
+
 refresh_omarchy_theme() {
   if ! command -v omarchy >/dev/null 2>&1; then
     warn "omarchy not in PATH — installed theme files but could not render current Herdr theme"
@@ -214,6 +236,7 @@ copy_file 0755 "$HOOK_SOURCE" "$HOOK_TARGET"
 ok "Installed Omarchy Herdr theme sync hook"
 
 install_herdr_omarchy_plugin || true
+install_herdr_omarchy_config || true
 install_herdr_omarchy_commands || true
 
 if refresh_omarchy_theme; then

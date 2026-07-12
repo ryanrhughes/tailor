@@ -2,13 +2,31 @@
 
 set -euo pipefail
 
+source_path=${BASH_SOURCE[0]}
+while [[ -L $source_path ]]; do
+  source_dir=$(cd "$(dirname "$source_path")" && pwd -P)
+  source_path=$(readlink "$source_path")
+  [[ $source_path == /* ]] || source_path="$source_dir/$source_path"
+done
+script_dir=$(cd "$(dirname "$source_path")" && pwd -P)
+
 usage() {
   cat <<'EOF'
 Usage: herdr-omarchy <hdl|hds|hdlm|hsl> [arguments]
+       herdr-omarchy preset <name>
        hdl [ai-command] [second-ai-command]
        hds [agent-command]
-       hdlm [ai-command] [second-ai-command]
+       hdlm [options] [ai-command] [second-ai-command]
        hsl [pane-count] [command...]
+
+Common options:
+  --preset NAME       Apply a named preset from config.toml.
+
+hdlm options:
+  --dry-run           Show the tab plan without changing Herdr.
+  --yes               Continue without prompting above the warning threshold.
+  --exclude PATTERN   Exclude matching directory names; repeatable.
+  --only PATTERN      Include only matching directory names; repeatable.
 
 Layouts:
   hdl   Editor, bottom terminal, and right AI pane.
@@ -26,6 +44,7 @@ Environment:
   HERDR_OMARCHY_AI_STACK_RATIO         First AI share above second AI (default: 0.50)
   HERDR_OMARCHY_SWARM_COUNT            Default hsl pane count (default: 6)
   HERDR_OMARCHY_SWARM_COMMAND          Default hsl command (default: AI command)
+  HERDR_OMARCHY_CONFIG                 Config path override
 EOF
 }
 
@@ -70,11 +89,11 @@ json_tab_id() {
 }
 
 editor_command() {
-  printf '%s .' "${HERDR_OMARCHY_EDITOR:-${EDITOR:-nvim}}"
+  printf '%s .' "${HERDR_OMARCHY_EDITOR:-${EDITOR:-$config_editor}}"
 }
 
 default_ai_command() {
-  printf '%s' "${HERDR_OMARCHY_AI_COMMAND:-opencode2}"
+  printf '%s' "${HERDR_OMARCHY_AI_COMMAND:-$config_ai}"
 }
 
 plugin_mode=false
@@ -85,6 +104,59 @@ workspace_id=
 tab_id=
 project_dir=
 pane_json=
+config_json=
+config_editor=nvim
+config_ai=opencode2
+config_diff='hunk diff --watch'
+config_hds_agent=
+config_editor_terminal_ratio=0.85
+config_editor_ai_ratio=0.70
+config_ai_stack_ratio=0.50
+config_hdlm_warn_threshold=5
+config_hdlm_exclude=()
+config_hdlm_only=()
+preset_name=
+preset_layout=
+preset_commands=()
+preset_command=
+preset_count=
+
+load_config() {
+  local config_path value
+  config_path=${HERDR_OMARCHY_CONFIG:-${HERDR_PLUGIN_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins/config/herdr-omarchy}/config.toml}
+  if [[ -n $preset_name ]]; then
+    config_json=$(python3 "$script_dir/read-config.py" "$config_path" "$preset_name")
+  else
+    config_json=$(python3 "$script_dir/read-config.py" "$config_path")
+  fi
+
+  config_editor=$(jq -r '.editor' <<<"$config_json")
+  config_ai=$(jq -r '.ai' <<<"$config_json")
+  config_diff=$(jq -r '.diff' <<<"$config_json")
+  config_hds_agent=$(jq -r '.hds_agent // empty' <<<"$config_json")
+  config_editor_terminal_ratio=$(jq -r '.ratios.editor_terminal' <<<"$config_json")
+  config_editor_ai_ratio=$(jq -r '.ratios.editor_ai' <<<"$config_json")
+  config_ai_stack_ratio=$(jq -r '.ratios.ai_stack' <<<"$config_json")
+  config_hdlm_warn_threshold=$(jq -r '.hdlm.warn_threshold' <<<"$config_json")
+  config_hdlm_exclude=()
+  while IFS= read -r value; do
+    config_hdlm_exclude+=("$value")
+  done < <(jq -r '.hdlm.exclude[]' <<<"$config_json")
+  config_hdlm_only=()
+  while IFS= read -r value; do
+    config_hdlm_only+=("$value")
+  done < <(jq -r '.hdlm.only[]' <<<"$config_json")
+
+  if [[ -n $preset_name ]]; then
+    preset_layout=$(jq -r '.selected_preset.layout' <<<"$config_json")
+    preset_commands=()
+    while IFS= read -r value; do
+      preset_commands+=("$value")
+    done < <(jq -r '.selected_preset.commands[]?' <<<"$config_json")
+    preset_command=$(jq -r '.selected_preset.command // empty' <<<"$config_json")
+    preset_count=$(jq -r '.selected_preset.count // empty' <<<"$config_json")
+  fi
+}
 
 resolve_context() {
   local context_json=${HERDR_PLUGIN_CONTEXT_JSON:-{}}
@@ -118,6 +190,34 @@ resolve_context() {
 
   [[ -n $project_dir && -d $project_dir ]] || fail "could not resolve a valid working directory"
   project_dir=$(cd "$project_dir" && pwd -P)
+}
+
+lock_dir=
+
+release_lock() {
+  [[ -z $lock_dir ]] || rm -rf "$lock_dir"
+}
+
+acquire_tab_lock() {
+  local lock_root lock_scope holder=
+  lock_root=${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/herdr-omarchy-$UID
+  mkdir -p "$lock_root"
+  chmod 0700 "$lock_root"
+  lock_scope=$(printf '%s' "${HERDR_SOCKET_PATH:-default}" | cksum)
+  lock_scope=${lock_scope%% *}
+  lock_dir="$lock_root/$lock_scope-${tab_id//[^[:alnum:]_.-]/_}.lock"
+
+  if ! mkdir "$lock_dir" 2>/dev/null; then
+    [[ ! -f $lock_dir/pid ]] || holder=$(<"$lock_dir/pid")
+    if [[ $holder =~ ^[0-9]+$ ]] && kill -0 "$holder" 2>/dev/null; then
+      fail "another layout command is already running for tab $tab_id"
+    fi
+    rm -rf "$lock_dir"
+    mkdir "$lock_dir" 2>/dev/null || fail "could not lock tab $tab_id"
+  fi
+
+  printf '%s' "$$" >"$lock_dir/pid"
+  trap release_lock EXIT
 }
 
 tab_pane_count() {
@@ -195,15 +295,15 @@ bootstrap_hdl() {
   local dir=$1 editor_pane=$2 ai_command=$3 second_ai_command=${4:-}
   local terminal_pane ai_pane ai2_pane
 
-  terminal_pane=$(split_pane "$editor_pane" down "$dir" "${HERDR_OMARCHY_EDITOR_TERMINAL_RATIO:-0.85}")
-  ai_pane=$(split_pane "$editor_pane" right "$dir" "${HERDR_OMARCHY_EDITOR_AI_RATIO:-0.70}")
+  terminal_pane=$(split_pane "$editor_pane" down "$dir" "${HERDR_OMARCHY_EDITOR_TERMINAL_RATIO:-$config_editor_terminal_ratio}")
+  ai_pane=$(split_pane "$editor_pane" right "$dir" "${HERDR_OMARCHY_EDITOR_AI_RATIO:-$config_editor_ai_ratio}")
 
   rename_pane "$editor_pane" editor
   rename_pane "$terminal_pane" terminal
   rename_pane "$ai_pane" ai
 
   if [[ -n $second_ai_command ]]; then
-    ai2_pane=$(split_pane "$ai_pane" down "$dir" "${HERDR_OMARCHY_AI_STACK_RATIO:-0.50}")
+    ai2_pane=$(split_pane "$ai_pane" down "$dir" "${HERDR_OMARCHY_AI_STACK_RATIO:-$config_ai_stack_ratio}")
     rename_pane "$ai2_pane" ai-2
     run_in_pane "$ai2_pane" "$dir" "$second_ai_command"
   fi
@@ -218,9 +318,13 @@ layout_hdl() {
   require_source_shell
   require_empty_layout
 
-  ai_command=${1:-$(default_ai_command)}
-  second_ai_command=${2:-}
-  rename_tab "$tab_id" "$(basename "$project_dir")"
+  if (( $# == 0 && ${#preset_commands[@]} > 0 )); then
+    ai_command=${preset_commands[0]}
+    second_ai_command=${preset_commands[1]:-}
+  else
+    ai_command=${1:-$(default_ai_command)}
+    second_ai_command=${2:-}
+  fi
   bootstrap_hdl "$project_dir" "$invocation_pane" "$ai_command" "$second_ai_command"
   printf 'created hdl layout in %s\n' "$project_dir"
 }
@@ -234,10 +338,13 @@ layout_hds() {
   terminal_pane=$(split_pane "$editor_pane" down "$project_dir" 0.50)
   diff_pane=$(split_pane "$editor_pane" right "$project_dir" 0.50)
   agent_pane=$(split_pane "$terminal_pane" right "$project_dir" 0.50)
-  diff_command=${HERDR_OMARCHY_DIFF_COMMAND:-hunk diff --watch}
-  agent_command=${1:-${HERDR_OMARCHY_HDS_AGENT:-$(default_ai_command)}}
+  diff_command=${HERDR_OMARCHY_DIFF_COMMAND:-$config_diff}
+  if (( $# == 0 && ${#preset_commands[@]} > 0 )); then
+    agent_command=${preset_commands[0]}
+  else
+    agent_command=${1:-${HERDR_OMARCHY_HDS_AGENT:-${config_hds_agent:-$(default_ai_command)}}}
+  fi
 
-  rename_tab "$tab_id" "$(basename "$project_dir")"
   rename_pane "$editor_pane" editor
   rename_pane "$terminal_pane" terminal
   rename_pane "$diff_pane" diff
@@ -263,22 +370,127 @@ create_tab() {
   printf '%s\t%s' "$created_tab" "$root_pane"
 }
 
+matches_any_pattern() {
+  local value=$1 pattern
+  shift
+  for pattern in "$@"; do
+    [[ $value == $pattern ]] && return 0
+  done
+  return 1
+}
+
+print_hdlm_plan() {
+  local index dir label existing
+  printf 'hdlm will prepare %d folders in workspace %s:\n' "${#hdlm_dirs[@]}" "$workspace_id" >&2
+  for ((index = 0; index < ${#hdlm_dirs[@]}; index++)); do
+    dir=${hdlm_dirs[$index]}
+    label=$(basename "$dir")
+    if (( index == 0 )); then
+      printf '  current tab %s <- %s\n' "$tab_id" "$label" >&2
+      continue
+    fi
+    existing=$(find_tab_id "$label")
+    if [[ -n $existing ]]; then
+      printf '  existing tab %s <- %s\n' "$existing" "$label" >&2
+    else
+      printf '  new tab <- %s\n' "$label" >&2
+    fi
+  done
+}
+
+hdlm_dirs=()
+
 layout_hdlm() {
-  local ai_command second_ai_command first=true
-  local dir label existing existing_count created root_pane count=0
-  (( $# <= 2 )) || fail "hdlm expects at most two command strings"
+  local ai_command second_ai_command first=true dry_run=false assume_yes=false
+  local dir label existing existing_count created root_pane count=0 answer
+  local -a commands=() exclude_patterns=("${config_hdlm_exclude[@]}") only_patterns=("${config_hdlm_only[@]}")
+
+  while (( $# > 0 )); do
+    case $1 in
+      --dry-run)
+        dry_run=true
+        shift
+        ;;
+      --yes)
+        assume_yes=true
+        shift
+        ;;
+      --exclude|--only)
+        [[ -n ${2:-} ]] || fail "$1 requires a pattern"
+        if [[ $1 == --exclude ]]; then
+          exclude_patterns+=("$2")
+        else
+          only_patterns+=("$2")
+        fi
+        shift 2
+        ;;
+      --)
+        shift
+        commands+=("$@")
+        break
+        ;;
+      -*)
+        fail "unknown hdlm option: $1"
+        ;;
+      *)
+        commands+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  (( ${#commands[@]} <= 2 )) || fail "hdlm expects at most two command strings"
   require_source_shell
   require_empty_layout
 
-  ai_command=${1:-$(default_ai_command)}
-  second_ai_command=${2:-}
+  if (( ${#commands[@]} == 0 && ${#preset_commands[@]} > 0 )); then
+    ai_command=${preset_commands[0]}
+    second_ai_command=${preset_commands[1]:-}
+  else
+    ai_command=${commands[0]:-$(default_ai_command)}
+    second_ai_command=${commands[1]:-}
+  fi
 
+  hdlm_dirs=()
   shopt -s nullglob
   for dir in "$project_dir"/*/; do
     [[ -d $dir ]] || continue
     dir=${dir%/}
     label=$(basename "$dir")
+    if (( ${#only_patterns[@]} > 0 )) && ! matches_any_pattern "$label" "${only_patterns[@]}"; then
+      continue
+    fi
+    if (( ${#exclude_patterns[@]} > 0 )) && matches_any_pattern "$label" "${exclude_patterns[@]}"; then
+      continue
+    fi
+    hdlm_dirs+=("$dir")
+  done
 
+  (( ${#hdlm_dirs[@]} > 0 )) || fail "no matching direct subdirectories under $project_dir"
+
+  if [[ $dry_run == true ]] || (( config_hdlm_warn_threshold > 0 && ${#hdlm_dirs[@]} > config_hdlm_warn_threshold )); then
+    print_hdlm_plan
+  fi
+  if [[ $dry_run == true ]]; then
+    return
+  fi
+  if (( config_hdlm_warn_threshold > 0 && ${#hdlm_dirs[@]} > config_hdlm_warn_threshold )); then
+    printf 'warning: this will prepare %d folder layouts and add up to %d tabs\n' \
+      "${#hdlm_dirs[@]}" "$(( ${#hdlm_dirs[@]} - 1 ))" >&2
+    if [[ $assume_yes != true ]]; then
+      if [[ $plugin_mode == true ]]; then
+        herdr_quiet notification show "hdlm needs confirmation" \
+          --body "${#hdlm_dirs[@]} folders; run hdlm --yes from the current shell" || true
+        fail "confirmation required for ${#hdlm_dirs[@]} folders; run hdlm --yes"
+      fi
+      [[ -t 0 ]] || fail "confirmation required for ${#hdlm_dirs[@]} folders; rerun with --yes"
+      read -r -p 'Continue? [y/N] ' answer
+      [[ $answer == y || $answer == Y || $answer == yes || $answer == YES ]] || fail "cancelled"
+    fi
+  fi
+
+  for dir in "${hdlm_dirs[@]}"; do
+    label=$(basename "$dir")
     if [[ $first == true ]]; then
       rename_tab "$tab_id" "$label"
       bootstrap_hdl "$dir" "$invocation_pane" "$ai_command" "$second_ai_command"
@@ -312,7 +524,6 @@ layout_hdlm() {
     count=$((count + 1))
   done
 
-  (( count > 0 )) || fail "no direct subdirectories under $project_dir"
   printf 'prepared hdlm layout for %s (%d tabs)\n' "$project_dir" "$count"
 }
 
@@ -341,12 +552,16 @@ layout_hsl() {
   require_source_shell
   require_empty_layout
 
-  count=${1:-${HERDR_OMARCHY_SWARM_COUNT:-6}}
-  (( $# == 0 )) || shift
+  if (( $# == 0 )); then
+    count=${preset_count:-${HERDR_OMARCHY_SWARM_COUNT:-6}}
+    command_text=${preset_command:-${HERDR_OMARCHY_SWARM_COMMAND:-$(default_ai_command)}}
+  else
+    count=$1
+    shift
+    command_text=${*:-${preset_command:-${HERDR_OMARCHY_SWARM_COMMAND:-$(default_ai_command)}}}
+  fi
   [[ $count =~ ^[0-9]+$ ]] && (( count > 0 )) || fail "hsl pane count must be a positive integer"
-  command_text=${*:-${HERDR_OMARCHY_SWARM_COMMAND:-$(default_ai_command)}}
 
-  rename_tab "$tab_id" "$(basename "$project_dir")"
   swarm_panes=()
   split_swarm_group "$invocation_pane" "$count" right
   for pane_id in "${swarm_panes[@]}"; do
@@ -358,7 +573,8 @@ layout_hsl() {
 }
 
 main() {
-  local program=${0##*/} command
+  local program=${0##*/} command generic_preset=false parsing_options=true
+  local -a filtered_args=()
   case $program in
     hdl|hds|hdlm|hsl)
       command=$program
@@ -374,20 +590,55 @@ main() {
       ;;
   esac
 
+  if [[ $command == preset ]]; then
+    preset_name=${1:-}
+    [[ -n $preset_name ]] || fail "preset requires a name"
+    shift
+    generic_preset=true
+  else
+    while (( $# > 0 )); do
+      if [[ $parsing_options == true && $1 == --preset ]]; then
+        [[ -n ${2:-} ]] || fail "--preset requires a name"
+        preset_name=$2
+        shift 2
+      elif [[ $parsing_options == true && $1 == -- ]]; then
+        parsing_options=false
+        filtered_args+=("$1")
+        shift
+      else
+        filtered_args+=("$1")
+        shift
+      fi
+    done
+    set -- "${filtered_args[@]}"
+  fi
+
   case $command in
     -h|--help|help)
       usage
       return
       ;;
-    hdl|hds|hdlm|hsl) ;;
+    hdl|hds|hdlm|hsl|preset) ;;
     *) fail "unknown layout: $command" ;;
   esac
 
   require_command jq
+  require_command python3
+  load_config
+
+  if [[ $generic_preset == true ]]; then
+    command=$preset_layout
+  elif [[ -n $preset_name && $preset_layout != "$command" ]]; then
+    fail "preset $preset_name uses $preset_layout, not $command"
+  fi
+
   resolve_context
+  acquire_tab_lock
   "layout_$command" "$@"
 
   if [[ -n $deferred_command ]]; then
+    release_lock
+    trap - EXIT
     exec "${SHELL:-/bin/bash}" -lc "$(in_cwd "$deferred_cwd" "$deferred_command")"
   fi
 }

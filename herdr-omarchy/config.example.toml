@@ -1,0 +1,22 @@
+editor = "nvim"
+ai = "opencode2"
+diff = "hunk diff --watch"
+
+[ratios]
+editor_terminal = 0.85
+editor_ai = 0.70
+ai_stack = 0.50
+
+[hdlm]
+warn_threshold = 5
+exclude = ["node_modules", "vendor"]
+only = []
+
+[presets.review]
+layout = "hdl"
+commands = ["cx", "codex"]
+
+[presets.swarm]
+layout = "hsl"
+count = 6
+command = "opencode2"

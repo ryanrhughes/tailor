@@ -1,6 +1,6 @@
 id = "herdr-omarchy"
 name = "Herdr Omarchy Layouts"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.7.0"
 description = "Omarchy-style development layouts for Herdr panes, tabs, and workspaces."
 platforms = ["linux", "macos"]
@@ -52,3 +52,15 @@ id = "hsl-cx"
 title = "Create six-pane Herdr swarm layout with cx"
 contexts = ["pane"]
 command = ["bash", "bin/herdr-omarchy", "hsl", "6", "cx"]
+
+[[actions]]
+id = "preset-review"
+title = "Create review preset layout"
+contexts = ["pane"]
+command = ["bash", "bin/herdr-omarchy", "preset", "review"]
+
+[[actions]]
+id = "preset-swarm"
+title = "Create swarm preset layout"
+contexts = ["pane"]
+command = ["bash", "bin/herdr-omarchy", "preset", "swarm"]
