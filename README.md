@@ -34,6 +34,7 @@ Each step is `setup-<step>.sh`, idempotent, and can be invoked standalone or via
 |---|---|
 | `preflight` | Verifies the basics: pacman, gum, jq/curl/gh/docker, mise/node/npm, and 1Password auth. Bails on missing prerequisites. |
 | `cleanup` | Removes stale Tailor-managed artifacts from previous versions, like the old unofficial `figma-developer-mcp` install/config. |
+| `swap` | Memory/swap tuning over Omarchy's defaults: `vm.swappiness=10` (via `/etc/sysctl.d/99-swappiness.conf`) so idle window/render buffers stay resident, and `zram-size = ram / 2` (zstd) so swap stays in fast compressed RAM instead of the encrypted disk. Idempotent — only touches the system (and prompts for sudo) when a value differs; warns if disk swap < RAM (hibernation). No-op on high-RAM machines. |
 | `repos` | Clones Omarchy repos (installer/iso/pkgs) and `kanata-homerow-mods` into `~/Work`. |
 | `apps` | Installs optional desktop apps via Omarchy (Dropbox, GeForce NOW, Tailscale, Voxtype) and AUR (Vesktop), sets Kitty as the Omarchy terminal, and starts the mailcatcher container. |
 | `envs` | Reads 1P item `tailor-envs` → writes `~/.config/hypr/envs.conf`. |

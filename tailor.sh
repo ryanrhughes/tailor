@@ -19,6 +19,7 @@ source "$SCRIPT_DIR/lib/common.sh"
 STEPS=(
   "preflight|Verify prerequisites (Omarchy, toolchain, 1Password)"
   "cleanup|Remove stale artifacts from previous tailor versions"
+  "swap|Memory/swap tuning (lower swappiness + grow zram)"
   "repos|Clone Omarchy + personal repos into ~/Work"
   "apps|Desktop apps (Dropbox, Tailscale, Voxtype, ...) + mailcatcher"
   "envs|~/.config/hypr/envs.conf from 1Password"
