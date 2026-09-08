@@ -1,0 +1,4 @@
+# Allow the active desktop user to run Kanata without input-group membership.
+# Keep this before 73-seat-late.rules so logind applies the access ACLs.
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="uaccess"
+SUBSYSTEM=="misc", KERNEL=="uinput", TAG+="uaccess", OPTIONS+="static_node=uinput"

@@ -1,0 +1,32 @@
+;; Tailor's shared QWERTY home-row mods. Device selection stays local.
+(include devices.kbd)
+
+(defsrc a s d f j k l ;)
+
+(defvar
+  tap-repress-timeout 200
+  hold-timeout 150
+  typing-idle 100
+
+  ;; Home-row mod keys are omitted so same-hand modifiers can be stacked.
+  left-hand-keys (q w e r t g z x c v b)
+  right-hand-keys (y u i o p h n m , . /)
+)
+
+(deftemplate home-mod (key modifier hand)
+  (tap-hold-release-keys $tap-repress-timeout $hold-timeout
+    $key $modifier $hand (require-prior-idle $typing-idle))
+)
+
+(defalias
+  a (t! home-mod a lctl $left-hand-keys)
+  s (t! home-mod s lalt $left-hand-keys)
+  d (t! home-mod d lmet $left-hand-keys)
+  f (t! home-mod f lsft $left-hand-keys)
+  j (t! home-mod j rsft $right-hand-keys)
+  k (t! home-mod k rmet $right-hand-keys)
+  l (t! home-mod l ralt $right-hand-keys)
+  ; (t! home-mod ; rctl $right-hand-keys)
+)
+
+(deflayer base @a @s @d @f @j @k @l @;)

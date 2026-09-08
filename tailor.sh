@@ -22,6 +22,7 @@ STEPS=(
   "swap|Memory/swap tuning (lower swappiness + grow zram)"
   "repos|Clone Omarchy + personal repos into ~/Work"
   "apps|Desktop apps (Dropbox, Tailscale, Voxtype, ...) + mailcatcher"
+  "kanata|Kanata homerow mods, keyboard access + desktop service"
   "envs|~/.config/hypr/envs.conf from 1Password"
   "ssh|GitHub SSH key + ~/.ssh/config from 1Password"
   "zsh|zsh via omarchy-zsh"

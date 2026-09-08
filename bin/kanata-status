@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""Check Kanata's open keyboard devices without reading any keystrokes."""
+
+import argparse
+from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+
+
+def keyboard_names(pid, proc=Path("/proc"), sysfs=Path("/sys/class/input")):
+    names = set()
+    try:
+        descriptors = list((proc / str(pid) / "fd").iterdir())
+    except OSError:
+        return names
+    for descriptor in descriptors:
+        try:
+            target = str(descriptor.readlink())
+            if not re.fullmatch(r"/dev/input/event\d+", target):
+                continue
+            device = sysfs / Path(target).name / "device"
+            # KEY_A is bit 30 of the least-significant capability word.
+            # System-control and media-only interfaces do not have letter keys.
+            key_bits = (device / "capabilities/key").read_text().split()
+            if key_bits and int(key_bits[-1], 16) & (1 << 30):
+                names.add((device / "name").read_text().strip())
+        except (OSError, ValueError):
+            continue
+    return names
+
+
+def status():
+    result = subprocess.run(
+        ["systemctl", "--user", "show", "kanata.service", "-p", "MainPID", "--value"],
+        capture_output=True, text=True,
+    )
+    pid = result.stdout.strip()
+    if result.returncode or not pid.isdigit() or pid == "0":
+        return False, "Kanata is not running"
+    names = keyboard_names(pid)
+    if not names:
+        return False, "Kanata is running, but no keyboard is attached"
+    return True, "Homerow mods active: " + ", ".join(sorted(names))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--wait", type=float, default=0, metavar="SECONDS",
+                        help="wait for Kanata to attach to a keyboard")
+    parser.add_argument("--quiet", action="store_true")
+    args = parser.parse_args()
+    if args.wait < 0 or args.wait > 60:
+        parser.error("--wait must be between 0 and 60 seconds")
+    deadline = time.monotonic() + args.wait
+    while True:
+        healthy, message = status()
+        if healthy or time.monotonic() >= deadline:
+            if not args.quiet:
+                print(message, file=sys.stdout if healthy else sys.stderr)
+            return 0 if healthy else 1
+        time.sleep(0.2)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

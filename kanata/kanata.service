@@ -1,0 +1,15 @@
+[Unit]
+Description=Kanata keyboard remapper
+Documentation=https://github.com/jtroo/kanata
+After=graphical-session.target
+PartOf=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/kanata --no-wait -c %h/.config/kanata/homerow-mods.kbd
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

@@ -35,8 +35,9 @@ Each step is `setup-<step>.sh`, idempotent, and can be invoked standalone or via
 | `preflight` | Verifies the basics: pacman, gum, jq/curl/gh/docker, mise/node/npm, and 1Password auth. Bails on missing prerequisites. |
 | `cleanup` | Removes stale Tailor-managed artifacts from previous versions, like the old unofficial `figma-developer-mcp` install/config. |
 | `swap` | Memory/swap tuning over Omarchy's defaults: `vm.swappiness=10` (via `/etc/sysctl.d/99-swappiness.conf`) so idle window/render buffers stay resident, and `zram-size = ram / 2` (zstd) so swap stays in fast compressed RAM instead of the encrypted disk. Idempotent — only touches the system (and prompts for sudo) when a value differs; warns if disk swap < RAM (hibernation). No-op on high-RAM machines. |
-| `repos` | Clones Omarchy repos (installer/iso/pkgs) and `kanata-homerow-mods` into `~/Work`. |
+| `repos` | Clones Omarchy repos (installer/iso/pkgs) into `~/Work`. |
 | `apps` | Installs optional desktop apps via Omarchy (Dropbox, GeForce NOW, Tailscale, Voxtype) and AUR (Vesktop), sets Kitty as the Omarchy terminal, and starts the mailcatcher container. |
+| `kanata` | Installs Kanata, the shared home-row layout, automatic keyboard detection, udev permissions, the desktop service, and gaming/status helpers. Retries interrupted setup and preserves gaming mode. Supports local device exclusions or an explicit keyboard list. |
 | `envs` | Reads 1P item `tailor-envs` → writes `~/.config/hypr/envs.conf`. |
 | `ssh` | Reads 1P SSH Key item `Github SSH Key` → writes `~/.ssh/id_ed25519_github` + `.pub`; reads 1P Server items tagged `tailor-ssh` → writes `~/.ssh/config` (managed block with markers; preserves any hand-written entries above/below). Pins `github.com` to the GitHub-named local key; every other host defaults to `Host * IdentityAgent ~/.1password/agent.sock`. |
 | `zsh` | Installs `omarchy-zsh` package and runs `omarchy-setup-zsh` (idempotent — detects template signature in `.zshrc`/`.bashrc`). |
@@ -51,6 +52,29 @@ Each step is `setup-<step>.sh`, idempotent, and can be invoked standalone or via
 | `dropbox` | Symlinks `~/Pictures`, `~/Videos`, `~/Documents` to their `~/Dropbox` counterparts (backs up existing dirs first). |
 
 Shared output helpers live in `lib/common.sh`; `lib/manual-action.sh` provides the gum-based "do this manually, then recheck" loop.
+
+## Kanata
+
+Tailor owns the Kanata installation. The shared layout lives in `kanata/homerow-mods.kbd`: mirrored Ctrl/Alt/Super/Shift on `a/s/d/f` and `;/l/k/j`, a 150 ms hold threshold, a 200 ms tap-repress window, and a 100 ms typing-idle guard. Left Alt remains ordinary Alt. There is no symbols layer.
+
+Internal and external keyboards are detected automatically, including keyboards with built-in pointing devices. Newly connected keyboards are picked up without rerunning setup:
+
+```bash
+./tailor.sh kanata
+```
+
+The local policy is saved in `~/.config/kanata/devices.kbd` and preserved on subsequent runs. Use `TAILOR_KANATA_DEVICES=auto` to replace an existing restricted list with automatic detection. Some mice expose a keyboard interface; exclude those locally with `TAILOR_KANATA_EXCLUDE`. Both variables accept exact Linux device names, with multiple names separated by newlines. Explicit keyboard names in `TAILOR_KANATA_DEVICES` restrict remapping to those devices. Replacing the policy also replaces its exclusions, so supply both variables when needed:
+
+```bash
+TAILOR_KANATA_DEVICES=auto \
+  TAILOR_KANATA_EXCLUDE='Pulsar Feinmann 8K Dongle Keyboard' ./tailor.sh kanata
+```
+
+The udev rule grants the active desktop user keyboard and uinput access without the `input` group. The service starts with the graphical session and restarts on failure; Ctrl+Space+Esc leaves it stopped. Super+F12 toggles gaming mode. `kanata-status` checks whether the process has opened an actual keyboard, without reading keystrokes.
+
+Existing config, service, and helpers are backed up with `.bak.before-tailor-kanata` before replacement. Setup records pending work in `~/.local/state/tailor/kanata/` so failed permission reloads or service restarts are retried. Unchanged runs do not restart Kanata. An existing stopped service stays stopped; fresh installs start immediately when a graphical session is active.
+
+Run the regression checks with `python3 tests/kanata-test.py`. To test the layout using Kanata 1.12's simulator, run `KANATA_SIM_BIN=/path/to/kanata_simulated_input python3 tests/kanata-sim.py`.
 
 ## 1Password items used
 

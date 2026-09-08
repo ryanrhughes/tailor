@@ -1,12 +1,27 @@
 #!/bin/bash
 # Toggle kanata homerow mods for gaming mode
 
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Ignore repeated presses while the service is starting or stopping.
+exec 9>"${XDG_RUNTIME_DIR:?}/kanata-gaming-toggle.lock"
+flock -n 9 || exit 0
+
+error() {
+    notify-send -a omarchy-action -u critical "Homerow mods" "$1" -i dialog-error || true
+    exit 1
+}
+
 # App name "omarchy-action" lets these toasts bypass do-not-disturb —
 # without it, DND swallows the only feedback this toggle gives.
 if systemctl --user is-active --quiet kanata.service; then
-    systemctl --user stop kanata.service
-    notify-send -a omarchy-action "Gaming Mode" "Homerow mods DISABLED" -i input-gaming
+    systemctl --user stop kanata.service || error "Could not disable homerow mods"
+    notify-send -a omarchy-action "Gaming Mode" "Homerow mods DISABLED" -i input-gaming || true
 else
-    systemctl --user start kanata.service
-    notify-send -a omarchy-action "Gaming Mode" "Homerow mods ENABLED" -i input-keyboard
+    systemctl --user start kanata.service || error "Could not start Kanata"
+    "$SCRIPT_DIR/kanata-status" --wait 6 --quiet ||
+        error "Kanata could not attach to a keyboard. Check kanata-status and the service journal."
+    notify-send -a omarchy-action "Gaming Mode" "Homerow mods ENABLED" -i input-keyboard || true
 fi

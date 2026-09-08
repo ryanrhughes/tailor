@@ -26,4 +26,3 @@ ensure_repo() {
 ensure_repo basecamp/omarchy ~/Work/omarchy/omarchy-installer
 ensure_repo omacom-io/omarchy-iso ~/Work/omarchy/omarchy-iso
 ensure_repo omacom-io/omarchy-pkgs ~/Work/omarchy/omarchy-pkgs
-ensure_repo ryanrhughes/kanata-homerow-mods ~/Work/kanata-homerow-mods
