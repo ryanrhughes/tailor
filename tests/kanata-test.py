@@ -37,6 +37,10 @@ if name in ("pkexec", "sudo"):
 elif name == "udevadm":
     if args[0] == "control" and os.environ.get("FAIL_RELOAD"):
         sys.exit(23)
+elif name == "modprobe":
+    if os.environ.get("FAIL_MODPROBE"):
+        sys.exit(24)
+    (root / "uinput").mkdir(exist_ok=True)
 elif name == "systemctl":
     action = args[1]
     if action == "is-active":
@@ -80,6 +84,9 @@ class SetupTest(unittest.TestCase):
         )
         source = source.replace('RULE_TARGET=/etc/udev/rules.d/70-kanata.rules',
                                 f'RULE_TARGET={self.rule}')
+        source = source.replace('MODULE_TARGET=/etc/modules-load.d/kanata.conf',
+                                f'MODULE_TARGET={self.root / "etc/kanata.conf"}')
+        source = source.replace('/sys/class/misc/uinput', str(self.root / "uinput"))
         (self.repo / "setup-kanata.sh").write_text(source)
         toggle = (REPO / "bin/kanata-gaming-toggle").read_text().replace(
             '${XDG_RUNTIME_DIR:?}', '${KANATA_TEST_RUNTIME:?}'
@@ -87,7 +94,7 @@ class SetupTest(unittest.TestCase):
         (self.repo / "bin/kanata-gaming-toggle").write_text(toggle)
         mock_bin = self.root / "mock-bin"
         mock_bin.mkdir()
-        for name in ("kanata", "systemctl", "udevadm", "sudo", "pkexec", "notify-send"):
+        for name in ("kanata", "systemctl", "udevadm", "sudo", "pkexec", "notify-send", "modprobe"):
             path = mock_bin / name
             path.write_text(MOCK)
             path.chmod(0o755)
@@ -162,6 +169,22 @@ class SetupTest(unittest.TestCase):
         self.assertIn(["udevadm", "control", "--reload-rules"], self.calls())
         self.assertFalse((self.state / "udev-pending").exists())
         self.assertFalse((self.state / "service-pending").exists())
+
+    def test_uinput_loaded_before_permission_trigger_and_persisted(self):
+        self.assert_success(self.run_setup())
+        self.assertEqual((self.root / "etc/kanata.conf").read_text(), "uinput\n")
+        calls = self.calls()
+        load = calls.index(["modprobe", "uinput"])
+        trigger = next(i for i, call in enumerate(calls)
+                       if call[:2] == ["udevadm", "trigger"])
+        self.assertLess(load, trigger)
+
+    def test_module_load_failure_retries_with_existing_files(self):
+        self.assertEqual(self.run_setup(FAIL_MODPROBE="1").returncode, 24)
+        self.assertTrue((self.state / "udev-pending").exists())
+        self.assertTrue((self.state / "service-pending").exists())
+        self.assert_success(self.run_setup())
+        self.assertFalse((self.state / "udev-pending").exists())
 
     def test_failed_restart_is_retried(self):
         self.existing_service("active")

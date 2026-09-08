@@ -70,7 +70,7 @@ TAILOR_KANATA_DEVICES=auto \
   TAILOR_KANATA_EXCLUDE='Pulsar Feinmann 8K Dongle Keyboard' ./tailor.sh kanata
 ```
 
-The udev rule grants the active desktop user keyboard and uinput access without the `input` group. The service starts with the graphical session and restarts on failure; Ctrl+Space+Esc leaves it stopped. Super+F12 toggles gaming mode. `kanata-status` checks whether the process has opened an actual keyboard, without reading keystrokes.
+Setup loads the `uinput` kernel module immediately and at boot via `/etc/modules-load.d/kanata.conf`. The udev rule grants the active desktop user keyboard and uinput access without the `input` group. The service starts with the graphical session and restarts on failure; Ctrl+Space+Esc leaves it stopped. Super+F12 toggles gaming mode. `kanata-status` checks whether the process has opened an actual keyboard, without reading keystrokes.
 
 Existing config, service, and helpers are backed up with `.bak.before-tailor-kanata` before replacement. Setup records pending work in `~/.local/state/tailor/kanata/` so failed permission reloads or service restarts are retried. Unchanged runs do not restart Kanata. An existing stopped service stays stopped; fresh installs start immediately when a graphical session is active.
 

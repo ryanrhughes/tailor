@@ -13,6 +13,7 @@ SERVICE_TARGET="$HOME/.config/systemd/user/kanata.service"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/tailor/kanata"
 RULE_SOURCE="$SCRIPT_DIR/udev/70-kanata.rules"
 RULE_TARGET=/etc/udev/rules.d/70-kanata.rules
+MODULE_TARGET=/etc/modules-load.d/kanata.conf
 
 hdr "Kanata homerow mods"
 
@@ -108,6 +109,22 @@ if [ -t 0 ] && [ -t 1 ]; then
   privilege=(sudo)
 else
   privilege=(pkexec)
+fi
+
+# A static /dev/uinput node can exist before the module is loaded. In that
+# state there is no sysfs device to trigger, so uaccess never grants access.
+# Load it at boot and now, before applying device permissions.
+printf 'uinput\n' > "$stage/kanata.conf"
+if ! cmp -s "$stage/kanata.conf" "$MODULE_TARGET"; then
+  touch "$STATE_DIR/udev-pending" "$STATE_DIR/service-pending"
+  if [ -e "$MODULE_TARGET" ] && [ ! -e "$MODULE_TARGET.bak.before-tailor-kanata" ]; then
+    "${privilege[@]}" cp -a "$MODULE_TARGET" "$MODULE_TARGET.bak.before-tailor-kanata"
+  fi
+  "${privilege[@]}" install -D -o root -g root -m 0644 "$stage/kanata.conf" "$MODULE_TARGET"
+fi
+if [ ! -d /sys/class/misc/uinput ]; then
+  touch "$STATE_DIR/udev-pending" "$STATE_DIR/service-pending"
+  "${privilege[@]}" modprobe uinput
 fi
 
 if ! cmp -s "$RULE_SOURCE" "$RULE_TARGET"; then
