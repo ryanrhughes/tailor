@@ -6,12 +6,13 @@
 #
 #   1. Token-based — tailor pulls API tokens from 1Password and writes the CLI's
 #      config file. Run on every tailor invocation; 1P is source of truth.
-#      CLIs: cortex, nebula, fizzy.
+#      CLIs: cortex, nebula, fizzy. Claude/Codex proxy settings are provisioned
+#      by setup-ai-proxy.sh and verified here against the proxy's models API.
 #
 #   2. OAuth-based — interactive login flows. Tailor verifies auth by exercising
 #      the API (active check, not just file existence) and prints the login
 #      command if not authed.
-#      CLIs: claude, codex, pi, hey, basecamp.
+#      CLIs: pi, hey, basecamp.
 #
 #   3. Dropbox — not a CLI, but tailor's symlink step in tailor.sh depends on
 #      ~/Dropbox being a signed-in sync root. Same recheck/skip flow.
@@ -154,29 +155,17 @@ EOF
   ok "wrote ~/.config/fizzy/config.yaml from Fizzy API"
 }
 
-# --- OAuth-based: ACTIVE verification ----------------------------------
+# --- Proxy and OAuth verification -------------------------------------
 # Each returns 0 on success, 1 on failure.
 
 verify_claude() {
   hdr "claude auth"
-  if timeout 30 claude --print "reply with only the word OK" </dev/null >/dev/null 2>&1; then
-    ok "claude authenticated and reachable"
-  else
-    warn "claude not authenticated (or API unreachable)"
-    hint "Run: claude  (then /login inside the session)"
-    return 1
-  fi
+  python3 "$SCRIPT_DIR/lib/ai-proxy.py" verify claude
 }
 
 verify_codex() {
   hdr "codex auth"
-  if codex login status 2>&1 | grep -q "Logged in"; then
-    ok "codex authenticated"
-  else
-    warn "codex not authenticated"
-    hint "Run: codex login"
-    return 1
-  fi
+  python3 "$SCRIPT_DIR/lib/ai-proxy.py" verify codex
 }
 
 verify_pi() {

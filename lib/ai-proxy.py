@@ -1,0 +1,204 @@
+"""Provision shared proxy credentials without printing them or replacing other settings."""
+
+import copy
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+import tomllib
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
+
+
+def paths():
+  return Path.home() / ".claude/settings.json", Path.home() / ".codex/config.toml"
+
+
+def read(path):
+  return path.read_text() if path.exists() else ""
+
+
+def proxy_credentials():
+  account = os.environ.get("TAILOR_OP_ACCOUNT", "chamberofsecrets.1password.com")
+  item_name = os.environ.get("TAILOR_AI_PROXY_ITEM", "CLI Proxy API")
+  result = subprocess.run(
+    ["op", "item", "get", item_name, "--account", account, "--format", "json"],
+    capture_output=True, text=True, check=False,
+  )
+  if result.returncode:
+    raise ValueError(f"Cannot read 1Password item '{item_name}'; unlock 1Password and retry.")
+  item = json.loads(result.stdout)
+  fields = {field.get("label", "").lower(): field.get("value") for field in item.get("fields", [])}
+  token = fields.get("token", "")
+  base_url = fields.get("base_url", "")
+  if not token or not base_url:
+    raise ValueError(f"1Password item '{item_name}' needs token (concealed client key) and base_url fields.")
+  parsed = urlsplit(base_url)
+  if (parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username
+      or parsed.password or parsed.query or parsed.fragment):
+    raise ValueError("The proxy base_url must be an HTTP(S) URL without credentials, query, or fragment.")
+  if any(character in token for character in "\r\n"):
+    raise ValueError("The proxy token must be a single line.")
+  base_url = base_url.rstrip("/")
+  if base_url.endswith("/v1"):
+    base_url = base_url[:-3]
+  return base_url, token
+
+
+def patch_table(text, table, changes):
+  """Edit ordinary TOML tables; a semantic comparison below guards unusual syntax."""
+  headers = list(re.finditer(r"(?m)^[ \t]*\[([^\n]+)\][ \t]*(?:#[^\n]*)?$", text))
+  start, end = 0, headers[0].start() if headers else len(text)
+  if table:
+    for index, header in enumerate(headers):
+      try:
+        document = tomllib.loads(header.group() + "\n__tailor_table__ = true\n")
+        for part in table:
+          document = document[part]
+        matched = document.get("__tailor_table__") is True
+      except (ValueError, KeyError, TypeError, AttributeError):
+        matched = False
+      if matched:
+        start = header.end() + (1 if text[header.end():].startswith("\n") else 0)
+        end = headers[index + 1].start() if index + 1 < len(headers) else len(text)
+        break
+    else:
+      text = text.rstrip() + "\n\n[" + ".".join(table) + "]\n"
+      start = end = len(text)
+  body = text[start:end]
+  for key, value in changes.items():
+    assignment = f"{key} = {json.dumps(value, ensure_ascii=False)}\n"
+    pattern = rf"(?m)^[ \t]*(?:{re.escape(key)}|\"{re.escape(key)}\"|'{re.escape(key)}')[ \t]*=[^\n]*(?:\n|$)"
+    if re.search(pattern, body):
+      body = re.sub(pattern, lambda match: assignment, body)
+    else:
+      body = body.rstrip() + ("\n" if body.strip() else "") + assignment
+  return text[:start] + body + text[end:]
+
+
+def codex_settings(text, base_url, token):
+  original = tomllib.loads(text)
+  expected = copy.deepcopy(original)
+  expected["model_provider"] = "cliproxyapi"
+  provider = expected.setdefault("model_providers", {}).setdefault("cliproxyapi", {})
+  # Conflicting custom auth mechanisms need an explicit migration, not a blind merge.
+  if any(key in provider for key in ("auth", "env_key")):
+    raise ValueError("Existing cliproxyapi auth/env_key configuration needs manual reconciliation.")
+  managed = {
+    "name": "CLIProxyAPI",
+    "base_url": base_url + "/v1",
+    "experimental_bearer_token": token,
+    "wire_api": "responses",
+    "requires_openai_auth": False,
+    "supports_websockets": True,
+  }
+  provider.update(managed)
+  if original == expected:
+    return text
+  updated = patch_table(text, (), {"model_provider": "cliproxyapi"})
+  old_provider = original.get("model_providers", {}).get("cliproxyapi", {})
+  changes = {key: value for key, value in managed.items() if old_provider.get(key) != value}
+  if changes:
+    updated = patch_table(updated, ("model_providers", "cliproxyapi"), changes)
+  if tomllib.loads(updated) != expected:
+    raise ValueError("Cannot safely merge this Codex TOML layout; config has not been changed.")
+  return updated
+
+
+def claude_settings(text, base_url, token):
+  settings = json.loads(text or "{}")
+  original = copy.deepcopy(settings)
+  env = settings.setdefault("env", {})
+  env.update({
+    "ANTHROPIC_BASE_URL": base_url,
+    "ANTHROPIC_AUTH_TOKEN": token,
+    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
+  })
+  for key, value in {
+    "API_TIMEOUT_MS": "600000",
+    "CLAUDE_API_TIMEOUT": "600000",
+    "MCP_TIMEOUT": "30000",
+    "MCP_TOOL_TIMEOUT": "600000",
+  }.items():
+    env.setdefault(key, value)
+  return text if settings == original else json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
+
+
+def write_private(path, text):
+  path = path.resolve()
+  path.parent.mkdir(parents=True, exist_ok=True)
+  if path.exists() and path.read_text() == text:
+    path.chmod(0o600)
+    print(f"  ✓ Already configured: {path}")
+    return
+  backup = path.with_name(path.name + ".bak.before-tailor-ai-proxy")
+  if path.exists() and not backup.exists():
+    with backup.open("xb") as output:
+      os.fchmod(output.fileno(), 0o600)
+      output.write(path.read_bytes())
+  fd, stage = tempfile.mkstemp(prefix=".tailor-ai-proxy-", dir=path.parent)
+  try:
+    with os.fdopen(fd, "w") as output:
+      output.write(text)
+    os.replace(stage, path)
+  finally:
+    if os.path.exists(stage):
+      os.unlink(stage)
+  print(f"  ✓ Configured: {path}")
+
+
+def verify(client):
+  claude, codex = paths()
+  if client == "claude":
+    env = json.loads(read(claude) or "{}").get("env", {})
+    base_url = env.get("ANTHROPIC_BASE_URL", "").rstrip("/") + "/v1"
+    token = env.get("ANTHROPIC_AUTH_TOKEN")
+  else:
+    settings = tomllib.loads(read(codex))
+    provider = settings.get("model_providers", {}).get("cliproxyapi", {})
+    if settings.get("model_provider") != "cliproxyapi":
+      raise ValueError("Codex is not using CLIProxyAPI; run ./tailor.sh ai-proxy.")
+    base_url = provider.get("base_url", "")
+    token = provider.get("experimental_bearer_token")
+  if not token or not base_url.startswith(("http://", "https://")):
+    raise ValueError(f"{client} proxy settings are missing; run ./tailor.sh ai-proxy.")
+  request = Request(base_url.rstrip("/") + "/models", headers={"Authorization": "Bearer " + token})
+  try:
+    with urlopen(request, timeout=15) as response:
+      models = json.load(response)
+    if not isinstance(models.get("data"), list) or not models["data"]:
+      raise ValueError("The proxy returned no models.")
+  except HTTPError as error:
+    raise ValueError(f"{client} proxy rejected the request (HTTP {error.code}); check the client token.") from None
+  except (URLError, TimeoutError):
+    raise ValueError(f"{client} proxy is unreachable; check Tailscale and Mercury.") from None
+  print(f"  ✓ {client} proxy authentication and model discovery verified")
+
+
+def main():
+  if sys.argv[1:] == ["setup"]:
+    base_url, token = proxy_credentials()
+    claude, codex = paths()
+    # Parse and validate both candidates before touching either live file.
+    claude_text = claude_settings(read(claude), base_url, token)
+    codex_text = codex_settings(read(codex), base_url, token)
+    write_private(claude, claude_text)
+    write_private(codex, codex_text)
+  elif len(sys.argv) == 3 and sys.argv[1] == "verify" and sys.argv[2] in ("claude", "codex"):
+    verify(sys.argv[2])
+  else:
+    raise ValueError("Usage: ai-proxy.py setup | verify claude | verify codex")
+
+
+if __name__ == "__main__":
+  os.umask(0o077)
+  try:
+    main()
+  except (json.JSONDecodeError, tomllib.TOMLDecodeError):
+    sys.exit("  ✗ Invalid JSON/TOML; existing configuration was not replaced.")
+  except (ValueError, OSError) as error:
+    sys.exit(f"  ✗ {error}")

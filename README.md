@@ -42,16 +42,33 @@ Each step is `setup-<step>.sh`, idempotent, and can be invoked standalone or via
 | `ssh` | Reads 1P SSH Key item `Github SSH Key` → writes `~/.ssh/id_ed25519_github` + `.pub`; reads 1P Server items tagged `tailor-ssh` → writes `~/.ssh/config` (managed block with markers; preserves any hand-written entries above/below). Pins `github.com` to the GitHub-named local key; every other host defaults to `Host * IdentityAgent ~/.1password/agent.sock`. |
 | `zsh` | Installs `omarchy-zsh` package and runs `omarchy-setup-zsh` (idempotent — detects template signature in `.zshrc`/`.bashrc`). |
 | `ai` | Installs missing AI CLI binaries (claude/codex/pi/opencode/gemini/copilot/playwright/ghui/hunk) via `mise use -g`, installs + logs into Mosaic, Claude Code attribution settings, OpenCode config + slash commands. |
+| `ai-proxy` | Configures Claude and Codex to use CLIProxyAPI on Mercury with the client token from 1Password. Adds missing settings, refreshes the proxy URL/token, and preserves models, hooks, plugins, and other settings. |
 | `pi` | Forces canonical Pi defaults (provider/model/thinking) and installs the canonical extension list. |
 | `ai-skills` | Reconciles the simple desired-state manifest in [`ai-skills.txt`](ai-skills.txt): `+` entries install/update skill sources and `-` entries remove unwanted skills. |
 | `cli-tools` | Installs internal CLIs (cortex, nebula, hey, fizzy, basecamp) and runs each one's `skill install` to register the bundled agent skill. |
-| `cli-auth` | For token-based CLIs (cortex/nebula/fizzy): pulls token + config from 1P → writes the CLI's config file. For OAuth CLIs (claude/codex/pi/hey/basecamp): actively verifies auth by exercising the API. Loops with a `gum` prompt to recheck after fixing. |
+| `cli-auth` | For token-based CLIs (cortex/nebula/fizzy): pulls token + config from 1P → writes the CLI's config file. Verifies Claude/Codex proxy credentials through authenticated model discovery, and checks Pi/HEY/Basecamp authentication. Loops with a `gum` prompt to recheck after fixing. |
 | `codexbar` | Installs `codexbar-waybar` (built from `~/Work/codexbar-waybar`), runs `codexbar-waybar-install`, and warns if `codexbar-tui` is installed. |
 | `herdr` | Installs the canonical Herdr config, Omarchy theme integration (`herdr.toml.tpl` + `theme-set.d/sync-herdr`), and links the `herdr-omarchy` plugin for Omarchy-style Herdr layouts (`hdl`, `hds`, `hdlm`, `hsl`). |
 | `config` | Copies `config/**` → `~/.config/` (excluding dirs owned by other steps) and `bin/**` → `~/.local/bin/`; sources `windows.conf` in `hyprland.conf` (legacy .conf systems only); applies 4K scaling to `monitors.conf` when detected. |
 | `dropbox` | Symlinks `~/Pictures`, `~/Videos`, `~/Documents` to their `~/Dropbox` counterparts (backs up existing dirs first). |
 
 Shared output helpers live in `lib/common.sh`; `lib/manual-action.sh` provides the gum-based "do this manually, then recheck" loop.
+
+## Claude and Codex proxy authentication
+
+Full runs include `ai-proxy` before `cli-auth`. To configure or repair just the proxy setup:
+
+```bash
+./tailor.sh ai-proxy
+```
+
+The `CLI Proxy API` 1Password item supplies `token` (the concealed client API key) and `base_url` (normally `http://mercury:8317`). Its existing `password` field is the management password and is never used for client authentication. Override the item name or UUID with `TAILOR_AI_PROXY_ITEM`.
+
+Claude receives `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, gateway model discovery, and missing timeout defaults in `~/.claude/settings.json`. Codex receives the `cliproxyapi` provider in `~/.codex/config.toml`, using the Responses API and WebSockets at `<base_url>/v1`. The client token is stored in Codex's `experimental_bearer_token` setting so terminal and desktop launches use the same configuration without shell exports; `requires_openai_auth = false` lets fresh systems connect without an additional ChatGPT login. These settings are described in the [official OpenAI configuration reference](https://developers.openai.com/codex/config-reference/).
+
+Existing model choices, unrelated config, and OAuth credential files are preserved. Changed configs get a one-time `.bak.before-tailor-ai-proxy` backup, configs and backups are private (mode `0600`), and identical reruns do not rewrite them. Both candidates are validated before either is written; unsupported TOML layouts fail without replacing the existing config. Rerun the step after changing the client token or URL in 1Password, then restart Claude/Codex to load the settings. Mercury must be reachable over Tailscale for API requests.
+
+`cli-auth` checks authenticated `/v1/models` access for both clients; it does not run inference or rely on cached OAuth login status. Run the provisioning regression checks with `python3 tests/ai-proxy-test.py`.
 
 ## Kanata
 
@@ -87,6 +104,7 @@ All in `chamberofsecrets.1password.com` by default (override via `TAILOR_OP_ACCO
 | `Cortex API` | API Credential | `token`, `tenant_id`, `api_url` | `setup-cli-auth.sh` |
 | `Nebula API` | API Credential | `token`, `workspace`/`workspace_url`/`domain`/`scheme`/`api_url` | `setup-cli-auth.sh` |
 | `Fizzy API` | API Credential | `token`, `account`, `api_url` | `setup-cli-auth.sh` |
+| `CLI Proxy API` | Login | `token` (concealed client key), `base_url`; existing management `password` is preserved | `setup-ai-proxy.sh` |
 | (any Server item, tagged `tailor-ssh`) | Server | `alias`, `IP`/hostname, `username`, optionally `port` | `setup-ssh.sh` |
 
 When `setup-cli-auth.sh` runs and an item is missing, it prints an `op item create` command tailored to your defaults — paste, run, re-run tailor.
@@ -122,6 +140,7 @@ herdr plugin install ryanrhughes/tailor/herdr-omarchy --yes
 ## Environment variables
 
 - `TAILOR_OP_ACCOUNT` — 1Password account hosting tailor's items. Default: `chamberofsecrets.1password.com`.
+- `TAILOR_AI_PROXY_ITEM` — 1Password item name or UUID supplying the shared Claude/Codex proxy client key and URL. Default: `CLI Proxy API`.
 - `TAILOR_GITHUB_SSH_KEY_ITEM_UUID` — 1Password SSH Key item used for the local GitHub key. Default: `dp7wepzy37ou6dirqsc4jmje7i`.
 - `TAILOR_GITHUB_SSH_KEY_PATH` — local path for the GitHub-only SSH private key. Default: `~/.ssh/id_ed25519_github`.
 
