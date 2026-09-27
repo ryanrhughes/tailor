@@ -1,117 +1,26 @@
 #!/bin/bash
-# Reconcile the global AI skills listed in ai-skills.txt.
-# Idempotent: `skills add` updates existing skills and `skills remove` ignores
-# skills that are already absent.
-#
-# Local skills vendored in this repo under skills/ (e.g. cli-design) are
-# symlinked as canonical into ~/.agents/skills, with harness links for
-# Claude Code (~/.claude/skills) and Pi (~/.pi/agent/skills), so `git pull`
-# updates them in place on every machine.
+# Agent skills: clone ryanrhughes/agent-skills and install its sync timer.
+# From then on the timer keeps skills current on its own (pull every 30
+# minutes, external.txt refresh about daily). See that repo's README.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 
-SKILLS_MANIFEST="${AI_SKILLS_MANIFEST:-$SCRIPT_DIR/ai-skills.txt}"
+AGENT_SKILLS_DIR="${AGENT_SKILLS_DIR:-$HOME/Work/agent-skills}"
 
-hdr "AI skills"
+hdr "Agent skills"
 
-if ! command -v npx >/dev/null 2>&1; then
-  warn "npx not in PATH — skills install skipped (node/npm are preflight requirements)"
-  exit 0
+if [ ! -d "$AGENT_SKILLS_DIR/.git" ]; then
+  info "Cloning ryanrhughes/agent-skills to $AGENT_SKILLS_DIR..."
+  gh repo clone ryanrhughes/agent-skills "$AGENT_SKILLS_DIR"
 fi
 
-if [ ! -f "$SKILLS_MANIFEST" ]; then
-  fail "Skills manifest not found: $SKILLS_MANIFEST"
-  exit 1
-fi
-
-line_number=0
-failures=0
-while IFS= read -r line || [ -n "$line" ]; do
-  ((line_number += 1))
-
-  fields=()
-  read -r -a fields <<< "$line"
-  [ "${#fields[@]}" -eq 0 ] && continue
-  [[ "${fields[0]}" == \#* ]] && continue
-
-  action="${fields[0]}"
-  if [ "${#fields[@]}" -lt 2 ]; then
-    warn "$SKILLS_MANIFEST:$line_number: missing source or skill name"
-    ((failures += 1))
-    continue
-  fi
-
-  case "$action" in
-    +)
-      source="${fields[1]}"
-      options=("${fields[@]:2}")
-      info "Syncing skills from $source..."
-      if npx -y skills add "$source" -g -y "${options[@]}" </dev/null >/dev/null 2>&1; then
-        ok "$source synced"
-      else
-        warn "Failed to sync skills from $source"
-        ((failures += 1))
-      fi
-      ;;
-    -)
-      name="${fields[1]}"
-      info "Ensuring $name is absent..."
-      if npx -y skills remove "$name" -g -y </dev/null >/dev/null 2>&1; then
-        ok "$name absent"
-      else
-        warn "Failed to remove $name"
-        ((failures += 1))
-      fi
-      ;;
-    *)
-      warn "$SKILLS_MANIFEST:$line_number: expected '+' or '-', got '$action'"
-      ((failures += 1))
-      ;;
-  esac
-done < "$SKILLS_MANIFEST"
-
-# --- Local skills vendored in this repo ---
-# Canonical install is a symlink to the repo copy: skills stay current with
-# git pull, and edits to the live skill land in the repo, not a stray copy.
-LOCAL_SKILLS=(cli-design)
-
-SKILLS_DIR="$HOME/.agents/skills"
-CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
-PI_SKILLS_DIR="$HOME/.pi/agent/skills"
-mkdir -p "$SKILLS_DIR" "$CLAUDE_SKILLS_DIR" "$PI_SKILLS_DIR"
-
-# Symlink $2 -> $1 unless $2 is already a real file/dir (never clobber content).
-link_skill() {
-  local target="$1" dest="$2"
-  if [ -e "$dest" ] && [ ! -L "$dest" ]; then
-    warn "$dest exists and is not a symlink — move it aside and re-run"
-    return 1
-  fi
-  ln -sfn "$target" "$dest"
-}
-
-for name in "${LOCAL_SKILLS[@]}"; do
-  src="$SCRIPT_DIR/skills/$name"
-  if [ ! -d "$src" ]; then
-    warn "$name not found at $src — repo checkout incomplete?"
-    ((failures += 1))
-    continue
-  fi
-  linked=1
-  link_skill "$src" "$SKILLS_DIR/$name" || linked=0
-  link_skill "../../.agents/skills/$name" "$CLAUDE_SKILLS_DIR/$name" || linked=0
-  link_skill "../../../.agents/skills/$name" "$PI_SKILLS_DIR/$name" || linked=0
-  if [ "$linked" = 1 ]; then
-    ok "$name linked (canonical + claude + pi)"
-  else
-    ((failures += 1))
-  fi
-done
-
-if [ "$failures" -gt 0 ]; then
-  fail "$failures skill operation(s) failed"
+if "$AGENT_SKILLS_DIR/scripts/sync" --install; then
+  ok "agent skills synced; timer active"
+else
+  warn "agent skills sync reported problems"
+  hint "Check: $AGENT_SKILLS_DIR/scripts/sync status"
   exit 1
 fi
