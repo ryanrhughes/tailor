@@ -1,6 +1,7 @@
 """Provision shared proxy credentials without printing them or replacing other settings."""
 
 import copy
+import getpass
 import json
 import os
 from pathlib import Path
@@ -22,21 +23,9 @@ def read(path):
   return path.read_text() if path.exists() else ""
 
 
-def proxy_credentials():
-  account = os.environ.get("TAILOR_OP_ACCOUNT", "chamberofsecrets.1password.com")
-  item_name = os.environ.get("TAILOR_AI_PROXY_ITEM", "CLI Proxy API")
-  result = subprocess.run(
-    ["op", "item", "get", item_name, "--account", account, "--format", "json"],
-    capture_output=True, text=True, check=False,
-  )
-  if result.returncode:
-    raise ValueError(f"Cannot read 1Password item '{item_name}'; unlock 1Password and retry.")
-  item = json.loads(result.stdout)
-  fields = {field.get("label", "").lower(): field.get("value") for field in item.get("fields", [])}
-  token = fields.get("token", "")
-  base_url = fields.get("base_url", "")
+def validate_credentials(base_url, token, source):
   if not token or not base_url:
-    raise ValueError(f"1Password item '{item_name}' needs token (concealed client key) and base_url fields.")
+    raise ValueError(f"{source} needs token (concealed client key) and base_url fields.")
   parsed = urlsplit(base_url)
   if (parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username
       or parsed.password or parsed.query or parsed.fragment):
@@ -47,6 +36,59 @@ def proxy_credentials():
   if base_url.endswith("/v1"):
     base_url = base_url[:-3]
   return base_url, token
+
+
+def prompt_credentials():
+  """Ask for the proxy settings directly (no 1Password, no GUI); token input is hidden on a TTY."""
+  print("  ℹ Manual mode: enter the CLIProxyAPI settings (from the 'CLI Proxy API' 1Password item).")
+  if sys.stdin.isatty():
+    base_url = input("    base_url (e.g. http://mercury:8317): ")
+    token = getpass.getpass("    token (hidden): ")
+  else:
+    base_url = sys.stdin.readline().rstrip("\r\n")
+    token = sys.stdin.readline().rstrip("\r\n")
+  return validate_credentials(base_url.strip(), token.strip(), "Manual input")
+
+
+def op_credentials():
+  account = os.environ.get("TAILOR_OP_ACCOUNT", "chamberofsecrets.1password.com")
+  item_name = os.environ.get("TAILOR_AI_PROXY_ITEM", "CLI Proxy API")
+  timeout = float(os.environ.get("TAILOR_OP_TIMEOUT", "20"))
+  try:
+    result = subprocess.run(
+      ["op", "item", "get", item_name, "--account", account, "--format", "json"],
+      capture_output=True, text=True, check=False, timeout=timeout,
+    )
+  except subprocess.TimeoutExpired:
+    raise ValueError(f"1Password CLI did not answer within {timeout:g}s; it is probably waiting for "
+                     "you to unlock the 1Password app (locked by the screen lock).") from None
+  except FileNotFoundError:
+    raise ValueError("1Password CLI (op) is not installed.") from None
+  if result.returncode:
+    raise ValueError(f"Cannot read 1Password item '{item_name}'; unlock 1Password and retry.")
+  item = json.loads(result.stdout)
+  fields = {field.get("label", "").lower(): field.get("value") for field in item.get("fields", [])}
+  return validate_credentials(fields.get("base_url", ""), fields.get("token", ""),
+                              f"1Password item '{item_name}'")
+
+
+def proxy_credentials(manual=False):
+  """Resolve base_url + token: env vars, then --manual, then 1Password with an interactive fallback."""
+  env_url = os.environ.get("TAILOR_AI_PROXY_BASE_URL", "")
+  env_token = os.environ.get("TAILOR_AI_PROXY_TOKEN", "")
+  if env_url or env_token:
+    print("  ℹ Using TAILOR_AI_PROXY_BASE_URL / TAILOR_AI_PROXY_TOKEN from the environment.")
+    return validate_credentials(env_url, env_token, "TAILOR_AI_PROXY_* environment")
+  if manual:
+    return prompt_credentials()
+  try:
+    return op_credentials()
+  except ValueError as error:
+    if not sys.stdin.isatty():
+      raise ValueError(f"{error}\n    Without a UI: rerun with --manual, or set "
+                       "TAILOR_AI_PROXY_BASE_URL and TAILOR_AI_PROXY_TOKEN.") from None
+    print(f"  ⚠ {error}")
+    return prompt_credentials()
 
 
 def patch_table(text, table, changes):
@@ -180,8 +222,8 @@ def verify(client):
 
 
 def main():
-  if sys.argv[1:] == ["setup"]:
-    base_url, token = proxy_credentials()
+  if sys.argv[1:] in (["setup"], ["setup", "--manual"]):
+    base_url, token = proxy_credentials(manual=len(sys.argv) == 3)
     claude, codex = paths()
     # Parse and validate both candidates before touching either live file.
     claude_text = claude_settings(read(claude), base_url, token)
@@ -191,7 +233,7 @@ def main():
   elif len(sys.argv) == 3 and sys.argv[1] == "verify" and sys.argv[2] in ("claude", "codex"):
     verify(sys.argv[2])
   else:
-    raise ValueError("Usage: ai-proxy.py setup | verify claude | verify codex")
+    raise ValueError("Usage: ai-proxy.py setup [--manual] | verify claude | verify codex")
 
 
 if __name__ == "__main__":

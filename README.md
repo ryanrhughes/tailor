@@ -64,6 +64,15 @@ Full runs include `ai-proxy` before `cli-auth`. To configure or repair just the 
 
 The `CLI Proxy API` 1Password item supplies `token` (the concealed client API key) and `base_url` (normally `http://mercury:8317`). Its existing `password` field is the management password and is never used for client authentication. Override the item name or UUID with `TAILOR_AI_PROXY_ITEM`.
 
+The `op` lookup is capped at 20 seconds (`TAILOR_OP_TIMEOUT`). If 1Password is locked (the Omarchy screen lock also locks the app) and you cannot reach its unlock dialog, for example over SSH, supply the values yourself instead:
+
+```bash
+./setup-ai-proxy.sh --manual                         # prompts for base_url and token (token hidden)
+TAILOR_AI_PROXY_BASE_URL=http://mercury:8317 TAILOR_AI_PROXY_TOKEN=... ./setup-ai-proxy.sh
+```
+
+Environment variables take precedence over 1Password. When `op` fails on an interactive terminal the step falls back to the same prompts; without a terminal it exits with a hint instead of hanging.
+
 Claude receives `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, gateway model discovery, and missing timeout defaults in `~/.claude/settings.json`. Codex receives the `cliproxyapi` provider in `~/.codex/config.toml`, using the Responses API and WebSockets at `<base_url>/v1`. The client token is stored in Codex's `experimental_bearer_token` setting so terminal and desktop launches use the same configuration without shell exports; `requires_openai_auth = false` lets fresh systems connect without an additional ChatGPT login. These settings are described in the [official OpenAI configuration reference](https://developers.openai.com/codex/config-reference/).
 
 Existing model choices, unrelated config, and OAuth credential files are preserved. Changed configs get a one-time `.bak.before-tailor-ai-proxy` backup, configs and backups are private (mode `0600`), and identical reruns do not rewrite them. Both candidates are validated before either is written; unsupported TOML layouts fail without replacing the existing config. Rerun the step after changing the client token or URL in 1Password, then restart Claude/Codex to load the settings. Mercury must be reachable over Tailscale for API requests.

@@ -151,6 +151,40 @@ request_max_retries = 9
     self.assertFalse(self.claude.exists())
     self.assertFalse(self.codex.exists())
 
+  def test_manual_mode_env_vars_bypass_1password(self):
+    self.item.unlink()  # op would fail; the env vars must win before it is consulted
+    env = dict(self.env, TAILOR_AI_PROXY_BASE_URL="http://mercury:8317/v1/", TAILOR_AI_PROXY_TOKEN=TOKEN)
+    result = subprocess.run([str(REPO / "setup-ai-proxy.sh")], env=env, capture_output=True, text=True)
+    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+    self.assertNotIn(TOKEN, result.stdout + result.stderr)
+    settings = json.loads(self.claude.read_text())
+    self.assertEqual(settings["env"]["ANTHROPIC_BASE_URL"], "http://mercury:8317")
+    self.assertEqual(settings["env"]["ANTHROPIC_AUTH_TOKEN"], TOKEN)
+    codex = tomllib.loads(self.codex.read_text())
+    self.assertEqual(codex["model_providers"]["cliproxyapi"]["experimental_bearer_token"], TOKEN)
+
+  def test_manual_flag_prompts_for_values(self):
+    self.item.unlink()
+    result = subprocess.run([str(REPO / "setup-ai-proxy.sh"), "--manual"], env=self.env,
+                            input=f"http://mercury:8317\n{TOKEN}\n", capture_output=True, text=True)
+    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+    self.assertIn("Manual mode", result.stdout)
+    self.assertNotIn(TOKEN, result.stdout + result.stderr)
+    self.assertEqual(json.loads(self.claude.read_text())["env"]["ANTHROPIC_AUTH_TOKEN"], TOKEN)
+    result = subprocess.run([str(REPO / "setup-ai-proxy.sh"), "--manual"], env=self.env,
+                            input="ftp://nope\n\n", capture_output=True, text=True)
+    self.assertNotEqual(result.returncode, 0)
+
+  def test_locked_1password_fails_fast_without_tty(self):
+    (self.bin / "op").write_text("#!/bin/bash\nsleep 30\n")
+    env = dict(self.env, TAILOR_OP_TIMEOUT="1")
+    result = subprocess.run([str(REPO / "tailor.sh"), "ai-proxy"], env=env, stdin=subprocess.DEVNULL,
+                            capture_output=True, text=True, timeout=15)
+    self.assertNotEqual(result.returncode, 0)
+    self.assertIn("did not answer within 1s", result.stdout + result.stderr)
+    self.assertIn("--manual", result.stdout + result.stderr)
+    self.assertFalse(self.claude.exists())
+
   def test_proxy_auth_verification_without_oauth(self):
     class Handler(BaseHTTPRequestHandler):
       def do_GET(handler):
