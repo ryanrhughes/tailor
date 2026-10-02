@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install internal/related CLI tools and their bundled agent skills.
+# Install internal/related CLI tools.
 # Idempotent: safe to re-run.
 #
 # Tools and install methods:
@@ -9,8 +9,8 @@
 #   fizzy    — yay AUR fizzy-cli, or basecamp install.sh fallback
 #   basecamp — yay -S basecamp-cli  (AUR)
 #
-# Each CLI ships a skill via `<cli> skill install` — we run it post-install.
-# Skill targets: ~/.agents/skills (canonical) + ~/.claude/skills (symlink).
+# Their agent skills are installed and kept current by the ai-skills step
+# (ryanrhughes/agent-skills external.txt), which runs after this one.
 #
 # Auth is NOT handled here — set tokens manually for now; we'll add a
 # setup-cli-auth.sh that pulls from 1Password later.
@@ -19,26 +19,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
-# shellcheck source=lib/manual-action.sh
-source "$SCRIPT_DIR/lib/manual-action.sh"
 
 WORK_DIR="$HOME/Work"
 BIN_DIR="$HOME/.local/bin"
-SKILLS_DIR="$HOME/.agents/skills"
-CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
-mkdir -p "$WORK_DIR" "$BIN_DIR" "$SKILLS_DIR" "$CLAUDE_SKILLS_DIR"
-
-# Run "<cli> skill install" with the canonical target + symlink. Best-effort.
-install_skill_for() {
-  local cli="$1"
-  if "$cli" skill install --target "$SKILLS_DIR" --symlink-to "$CLAUDE_SKILLS_DIR" >/dev/null 2>&1; then
-    ok "$cli skill installed"
-  elif "$cli" skill install >/dev/null 2>&1; then
-    ok "$cli skill installed (default args)"
-  else
-    warn "$cli skill install failed or interactive-only — run '$cli skill install' manually"
-  fi
-}
+mkdir -p "$WORK_DIR" "$BIN_DIR"
 
 # Ensure Go is available for building cortex/nebula. Installed globally via
 # mise since neither repo ships a .mise.toml.
@@ -84,12 +68,10 @@ ensure_go
 # --- cortex --------------------------------------------------------------
 hdr "cortex"
 make_link_repo cortex cortex-cli
-install_skill_for cortex
 
 # --- nebula --------------------------------------------------------------
 hdr "nebula"
 make_link_repo nebula nebula-cli
-install_skill_for nebula
 
 # --- hey -----------------------------------------------------------------
 # basecamp/hey-cli has no release binaries yet. Build from source.
@@ -111,7 +93,6 @@ else
   ln -sf "$HEY_DIR/bin/hey" "$BIN_DIR/hey"
   ok "hey installed: $(hey --version 2>&1 | head -1)"
 fi
-install_skill_for hey
 
 # --- fizzy ---------------------------------------------------------------
 # Prefer AUR fizzy-cli when present. Otherwise install via basecamp's
@@ -134,13 +115,6 @@ else
   fi
 fi
 
-# `fizzy skill` is interactive-only (no flags to skip prompts).
-hdr "fizzy skill"
-prompt_manual_action \
-  "fizzy skill not installed" \
-  "[ -f \"$SKILLS_DIR/fizzy/SKILL.md\" ]" \
-  "Run in another terminal: fizzy skill"
-
 # --- basecamp ------------------------------------------------------------
 hdr "basecamp"
 if pacman -Q basecamp-cli >/dev/null 2>&1; then
@@ -152,4 +126,3 @@ else
   yay -S --needed --noconfirm basecamp-cli
   ok "basecamp-cli installed"
 fi
-install_skill_for basecamp

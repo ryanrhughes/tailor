@@ -90,7 +90,7 @@ ensure_mise_ai_clis() {
   ok "AI CLIs installed via mise"
 }
 
-# Install Mosaic, trigger login when needed, then install the agent skill.
+# Install Mosaic and trigger login when needed. Its skills come from ai-skills.
 setup_mosaic() {
   hdr "Mosaic"
 
@@ -125,10 +125,6 @@ setup_mosaic() {
     hint "Or create a personal token: $MOSAIC_BASE_URL/my/api_keys"
     hint "Then run: mosaic login --base-url $MOSAIC_BASE_URL --token \"mosaic_pat_...\""
   fi
-
-  info "Installing mosaic agent skill..."
-  mosaic skill install
-  ok "mosaic skill installed"
 }
 
 # Setup Claude Code settings
@@ -178,7 +174,7 @@ setup_opencode() {
   fi
 }
 
-# Run setup (skills moved to setup-ai-skills.sh)
+# Run setup (skills are synced by setup-ai-skills.sh)
 ensure_mise_ai_clis
 setup_mosaic
 setup_claude_code

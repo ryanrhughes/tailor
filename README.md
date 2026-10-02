@@ -44,8 +44,8 @@ Each step is `setup-<step>.sh`, idempotent, and can be invoked standalone or via
 | `ai` | Installs missing AI CLI binaries (claude/codex/pi/opencode/gemini/copilot/playwright/ghui/hunk) via `mise use -g`, installs + logs into Mosaic, Claude Code attribution settings, OpenCode config + slash commands. |
 | `ai-proxy` | Configures Claude and Codex to use CLIProxyAPI on Mercury with the client token from 1Password. Adds missing settings, refreshes the proxy URL/token, and preserves models, hooks, plugins, and other settings. |
 | `pi` | Forces canonical Pi defaults (provider/model/thinking) and installs the canonical extension list. |
-| `ai-skills` | Reconciles the simple desired-state manifest in [`ai-skills.txt`](ai-skills.txt): `+` entries install/update skill sources and `-` entries remove unwanted skills. |
-| `cli-tools` | Installs internal CLIs (cortex, nebula, hey, fizzy, basecamp) and runs each one's `skill install` to register the bundled agent skill. |
+| `cli-tools` | Installs internal CLIs (cortex, nebula, hey, fizzy, basecamp). Their skills come from `ai-skills`. |
+| `ai-skills` | Clones [ryanrhughes/agent-skills](https://github.com/ryanrhughes/agent-skills) and installs its sync timer: personal skills plus every outside skill in its `external.txt`, kept current automatically across machines. |
 | `cli-auth` | For token-based CLIs (cortex/nebula/fizzy): pulls token + config from 1P → writes the CLI's config file. Verifies Claude/Codex proxy credentials through authenticated model discovery, and checks Pi/HEY/Basecamp authentication. Loops with a `gum` prompt to recheck after fixing. |
 | `codexbar` | Installs `codexbar-waybar` (built from `~/Work/codexbar-waybar`), runs `codexbar-waybar-install`, and warns if `codexbar-tui` is installed. |
 | `herdr` | Installs the canonical Herdr config, Omarchy theme integration (`herdr.toml.tpl` + `theme-set.d/sync-herdr`), and links the `herdr-omarchy` plugin for Omarchy-style Herdr layouts (`hdl`, `hds`, `hdlm`, `hsl`). |
