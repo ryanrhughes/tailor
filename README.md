@@ -64,6 +64,8 @@ Full runs include `ai-proxy` before `cli-auth`. To configure or repair just the 
 
 The `CLI Proxy API` 1Password item supplies `token` (the concealed client API key) and `base_url` (normally `http://mercury:8317`). Its existing `password` field is the management password and is never used for client authentication. Override the item name or UUID with `TAILOR_AI_PROXY_ITEM`.
 
+A bare hostname like `mercury` is written as the fully qualified name the system resolver picks (`mercury.<tailnet>.ts.net`). Codex ships a static musl build that walks the `/etc/resolv.conf` search domains itself, so a bare name can land on a LAN host such as `mercury.localdomain` and fail with `Connection refused` / `stream disconnected` while curl and Claude still work.
+
 The `op` lookup is capped at 20 seconds (`TAILOR_OP_TIMEOUT`). If 1Password is locked (the Omarchy screen lock also locks the app) and you cannot reach its unlock dialog, for example over SSH, supply the values yourself instead:
 
 ```bash
@@ -77,7 +79,7 @@ Claude receives `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, gateway model disc
 
 Existing model choices, unrelated config, and OAuth credential files are preserved. Changed configs get a one-time `.bak.before-tailor-ai-proxy` backup, configs and backups are private (mode `0600`), and identical reruns do not rewrite them. Both candidates are validated before either is written; unsupported TOML layouts fail without replacing the existing config. Rerun the step after changing the client token or URL in 1Password, then restart Claude/Codex to load the settings. Mercury must be reachable over Tailscale for API requests.
 
-`cli-auth` checks authenticated `/v1/models` access for both clients; it does not run inference or rely on cached OAuth login status. Run the provisioning regression checks with `python3 tests/ai-proxy-test.py`.
+`cli-auth` checks authenticated `/v1/models` access for both clients and flags a Codex config that still uses a bare proxy hostname; it does not run inference or rely on cached OAuth login status. Run the provisioning regression checks with `python3 tests/ai-proxy-test.py`.
 
 ## Kanata
 

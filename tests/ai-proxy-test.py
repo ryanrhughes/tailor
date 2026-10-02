@@ -1,17 +1,29 @@
 """Regression checks for safe, repeatable Claude/Codex proxy provisioning."""
 
+import contextlib
+import importlib.util
+import io
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import tempfile
 import threading
 import tomllib
 import unittest
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 REPO = Path(__file__).resolve().parents[1]
 TOKEN = 'test-client-token-"quoted"-\\literal'
+
+
+def load_proxy_module():
+  spec = importlib.util.spec_from_file_location("ai_proxy", REPO / "lib/ai-proxy.py")
+  module = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(module)
+  return module
 
 
 class ProxyTest(unittest.TestCase):
@@ -34,7 +46,7 @@ class ProxyTest(unittest.TestCase):
     self.claude = self.home / ".claude/settings.json"
     self.codex = self.home / ".codex/config.toml"
 
-  def set_item(self, token=TOKEN, url="http://mercury:8317"):
+  def set_item(self, token=TOKEN, url="http://mercury.tailnet.test:8317"):
     self.item.write_text(json.dumps({"fields": [
       {"label": "password", "value": "management-password-must-not-be-used"},
       {"label": "token", "value": token},
@@ -73,11 +85,11 @@ hooks = true
     claude = json.loads(self.claude.read_text())
     codex = tomllib.loads(self.codex.read_text())
     self.assertEqual(claude["env"]["ANTHROPIC_AUTH_TOKEN"], TOKEN)
-    self.assertEqual(claude["env"]["ANTHROPIC_BASE_URL"], "http://mercury:8317")
+    self.assertEqual(claude["env"]["ANTHROPIC_BASE_URL"], "http://mercury.tailnet.test:8317")
     self.assertEqual(codex["model_provider"], "cliproxyapi")
     provider = codex["model_providers"]["cliproxyapi"]
     self.assertEqual(provider["experimental_bearer_token"], TOKEN)
-    self.assertEqual(provider["base_url"], "http://mercury:8317/v1")
+    self.assertEqual(provider["base_url"], "http://mercury.tailnet.test:8317/v1")
     self.assertFalse(provider["requires_openai_auth"])
     before = [(p.read_bytes(), p.stat().st_mtime_ns) for p in (self.claude, self.codex)]
     self.run_setup()
@@ -102,9 +114,9 @@ hooks = true
     self.assertEqual(codex["model_reasoning_effort"], "high")
     self.assertTrue(codex["features"]["hooks"])
     self.assertTrue(self.codex.read_text().startswith("# Keep the user's comments"))
-    self.set_item(token="rotated-client-token", url="http://new-proxy:8317/v1/")
+    self.set_item(token="rotated-client-token", url="http://new-proxy.tailnet.test:8317/v1/")
     self.run_setup()
-    self.assertEqual(json.loads(self.claude.read_text())["env"]["ANTHROPIC_BASE_URL"], "http://new-proxy:8317")
+    self.assertEqual(json.loads(self.claude.read_text())["env"]["ANTHROPIC_BASE_URL"], "http://new-proxy.tailnet.test:8317")
     self.assertEqual(tomllib.loads(self.codex.read_text())["model_providers"]["cliproxyapi"]["experimental_bearer_token"], "rotated-client-token")
     for path in old:
       backup = path.with_name(path.name + ".bak.before-tailor-ai-proxy")
@@ -153,12 +165,12 @@ request_max_retries = 9
 
   def test_manual_mode_env_vars_bypass_1password(self):
     self.item.unlink()  # op would fail; the env vars must win before it is consulted
-    env = dict(self.env, TAILOR_AI_PROXY_BASE_URL="http://mercury:8317/v1/", TAILOR_AI_PROXY_TOKEN=TOKEN)
+    env = dict(self.env, TAILOR_AI_PROXY_BASE_URL="http://mercury.tailnet.test:8317/v1/", TAILOR_AI_PROXY_TOKEN=TOKEN)
     result = subprocess.run([str(REPO / "setup-ai-proxy.sh")], env=env, capture_output=True, text=True)
     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
     self.assertNotIn(TOKEN, result.stdout + result.stderr)
     settings = json.loads(self.claude.read_text())
-    self.assertEqual(settings["env"]["ANTHROPIC_BASE_URL"], "http://mercury:8317")
+    self.assertEqual(settings["env"]["ANTHROPIC_BASE_URL"], "http://mercury.tailnet.test:8317")
     self.assertEqual(settings["env"]["ANTHROPIC_AUTH_TOKEN"], TOKEN)
     codex = tomllib.loads(self.codex.read_text())
     self.assertEqual(codex["model_providers"]["cliproxyapi"]["experimental_bearer_token"], TOKEN)
@@ -166,7 +178,7 @@ request_max_retries = 9
   def test_manual_flag_prompts_for_values(self):
     self.item.unlink()
     result = subprocess.run([str(REPO / "setup-ai-proxy.sh"), "--manual"], env=self.env,
-                            input=f"http://mercury:8317\n{TOKEN}\n", capture_output=True, text=True)
+                            input=f"http://mercury.tailnet.test:8317\n{TOKEN}\n", capture_output=True, text=True)
     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
     self.assertIn("Manual mode", result.stdout)
     self.assertNotIn(TOKEN, result.stdout + result.stderr)
@@ -174,6 +186,33 @@ request_max_retries = 9
     result = subprocess.run([str(REPO / "setup-ai-proxy.sh"), "--manual"], env=self.env,
                             input="ftp://nope\n\n", capture_output=True, text=True)
     self.assertNotEqual(result.returncode, 0)
+
+  def test_bare_proxy_host_is_pinned_to_the_resolver_fqdn(self):
+    # Codex's musl resolver walks search domains itself; bare `mercury` reached a LAN host.
+    proxy = load_proxy_module()
+    answers = {"mercury": "mercury.tailnet.test.", "localhost": "localhost", "elsewhere": "cdn.example.com"}
+
+    def getaddrinfo(host, *_, **__):
+      if host not in answers:
+        raise socket.gaierror(socket.EAI_NONAME, "unknown host")
+      return [(socket.AF_INET, socket.SOCK_STREAM, 6, answers[host], ("100.64.0.1", 0))]
+
+    with mock.patch.object(proxy.socket, "getaddrinfo", side_effect=getaddrinfo) as lookup, \
+         contextlib.redirect_stdout(io.StringIO()):
+      self.assertEqual(proxy.qualify_base_url("http://mercury:8317"), "http://mercury.tailnet.test:8317")
+      self.assertEqual(proxy.qualify_base_url("https://mercury"), "https://mercury.tailnet.test")
+      for unchanged in ("http://localhost:8317", "http://elsewhere:8317", "http://unknown:8317"):
+        self.assertEqual(proxy.qualify_base_url(unchanged), unchanged)
+      lookup.reset_mock()
+      for literal in ("http://mercury.tailnet.test:8317", "http://100.64.0.1:8317", "http://[fd7a::1]:8317"):
+        self.assertEqual(proxy.qualify_base_url(literal), literal)
+      lookup.assert_not_called()
+      self.codex.parent.mkdir()
+      self.codex.write_text('model_provider = "cliproxyapi"\n\n[model_providers.cliproxyapi]\n'
+                            'base_url = "http://mercury:8317/v1"\nexperimental_bearer_token = "token"\n')
+      with mock.patch.dict(os.environ, HOME=str(self.home)), \
+           self.assertRaisesRegex(ValueError, "mercury.tailnet.test"):
+        proxy.verify("codex")
 
   def test_locked_1password_fails_fast_without_tty(self):
     (self.bin / "op").write_text("#!/bin/bash\nsleep 30\n")

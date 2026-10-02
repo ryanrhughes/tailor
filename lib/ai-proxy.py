@@ -6,12 +6,13 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 import sys
 import tempfile
 import tomllib
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 
@@ -36,6 +37,28 @@ def validate_credentials(base_url, token, source):
   if base_url.endswith("/v1"):
     base_url = base_url[:-3]
   return base_url, token
+
+
+def search_domain_host(host):
+  """Return the search-domain FQDN the system resolver picks for a bare host, else None.
+  Codex's static musl build walks resolv.conf search domains itself, so a bare `mercury` can
+  land on `mercury.localdomain` (LAN) instead of the Tailscale host every other client reaches."""
+  if not host or "." in host or ":" in host:
+    return None
+  try:
+    canonical = socket.getaddrinfo(host, None, flags=socket.AI_CANONNAME)[0][3].rstrip(".").lower()
+  except OSError:
+    return None
+  return canonical if canonical.startswith(host + ".") else None
+
+
+def qualify_base_url(base_url):
+  parts = urlsplit(base_url)
+  fqdn = search_domain_host(parts.hostname)
+  if not fqdn:
+    return base_url
+  print(f"  ℹ Using {fqdn} for '{parts.hostname}' so Codex resolves the same host.")
+  return urlunsplit(parts._replace(netloc=fqdn + (f":{parts.port}" if parts.port else "")))
 
 
 def prompt_credentials():
@@ -208,6 +231,8 @@ def verify(client):
     token = provider.get("experimental_bearer_token")
   if not token or not base_url.startswith(("http://", "https://")):
     raise ValueError(f"{client} proxy settings are missing; run ./tailor.sh ai-proxy.")
+  if client == "codex" and (fqdn := search_domain_host(urlsplit(base_url).hostname)):
+    raise ValueError(f"Codex may resolve the bare proxy host differently than {fqdn}; run ./tailor.sh ai-proxy.")
   request = Request(base_url.rstrip("/") + "/models", headers={"Authorization": "Bearer " + token})
   try:
     with urlopen(request, timeout=15) as response:
@@ -224,6 +249,7 @@ def verify(client):
 def main():
   if sys.argv[1:] in (["setup"], ["setup", "--manual"]):
     base_url, token = proxy_credentials(manual=len(sys.argv) == 3)
+    base_url = qualify_base_url(base_url)
     claude, codex = paths()
     # Parse and validate both candidates before touching either live file.
     claude_text = claude_settings(read(claude), base_url, token)
