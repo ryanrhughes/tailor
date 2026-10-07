@@ -12,7 +12,7 @@
 #   2. OAuth-based — interactive login flows. Tailor verifies auth by exercising
 #      the API (active check, not just file existence) and prints the login
 #      command if not authed.
-#      CLIs: pi, hey, basecamp.
+#      CLIs: hey, basecamp.
 #
 #   3. Dropbox — not a CLI, but tailor's symlink step in tailor.sh depends on
 #      ~/Dropbox being a signed-in sync root. Same recheck/skip flow.
@@ -31,8 +31,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 
-TAILOR_OP_ACCOUNT="${TAILOR_OP_ACCOUNT:-chamberofsecrets.1password.com}"
-
 field_value() {
   local json="$1" label="$2"
   echo "$json" | jq -r --arg L "$label" '
@@ -43,7 +41,7 @@ field_value() {
 }
 
 fetch_item() {
-  op item get "$1" --account "$TAILOR_OP_ACCOUNT" --format json 2>/dev/null || true
+  op_run item get "$1" --account "$TAILOR_OP_ACCOUNT" --format json 2>/dev/null || true
 }
 
 bootstrap_hint() {
@@ -168,29 +166,9 @@ verify_codex() {
   python3 "$SCRIPT_DIR/lib/ai-proxy.py" verify codex
 }
 
-verify_pi() {
-  hdr "pi auth"
-  # pi --print does not exit cleanly even after producing output (it hangs on
-  # TUI cleanup), so `pi --print | check exit code` always hits the timeout and
-  # reports a false negative. Instead we run pi in JSON mode and consider auth
-  # verified the moment the provider emits an assistant message_start event.
-  # `head -c` closes the pipe, killing pi via SIGPIPE; we capture into a var so
-  # pi's 141 exit status doesn't trip the script's pipefail.
-  local out
-  out=$(timeout 20 pi --print --mode json --no-session "ok" </dev/null 2>/dev/null \
-          | head -c 4096 || true)
-  if echo "$out" | grep -q '"type":"message_start","message":{"role":"assistant"'; then
-    ok "pi authenticated and reachable (via provider)"
-  else
-    warn "pi not authenticated or provider unreachable"
-    hint "Run: pi  (then sign in to the configured provider)"
-    return 1
-  fi
-}
-
 verify_hey() {
   hdr "hey auth"
-  if hey auth status 2>/dev/null | jq -e '.data.authenticated == true' >/dev/null; then
+  if timeout 20 hey auth status </dev/null 2>/dev/null | jq -e '.data.authenticated == true' >/dev/null; then
     ok "hey authenticated"
   else
     warn "hey not authenticated"
@@ -202,7 +180,7 @@ verify_hey() {
 verify_basecamp() {
   hdr "basecamp auth"
   local status authed expired
-  status=$(basecamp auth status 2>/dev/null || echo '{}')
+  status=$(timeout 20 basecamp auth status </dev/null 2>/dev/null || echo '{}')
   authed=$(echo "$status" | jq -r '.data.authenticated // false')
   expired=$(echo "$status" | jq -r '.data.expired // false')
 
@@ -213,7 +191,7 @@ verify_basecamp() {
 
   if [ "$authed" = "true" ] && [ "$expired" = "true" ]; then
     info "basecamp token expired — attempting refresh..."
-    if basecamp auth refresh 2>&1 | jq -e '.data.status == "refreshed"' >/dev/null 2>&1; then
+    if timeout 30 basecamp auth refresh </dev/null 2>&1 | jq -e '.data.status == "refreshed"' >/dev/null 2>&1; then
       ok "basecamp token refreshed"
       return 0
     fi
@@ -235,7 +213,7 @@ verify_dropbox() {
 
   if ! command -v dropbox >/dev/null 2>&1; then
     warn "dropbox not installed"
-    hint "Install: omarchy install dropbox"
+    hint "Install: omarchy install service dropbox"
     return 1
   fi
 
@@ -266,12 +244,18 @@ verify_dropbox() {
 
 run_all_checks() {
   failures=()
-  write_cortex_config || failures+=("cortex")
-  write_nebula_config || failures+=("nebula")
-  write_fizzy_config  || failures+=("fizzy")
+  if op_signed_in; then
+    write_cortex_config || failures+=("cortex")
+    write_nebula_config || failures+=("nebula")
+    write_fizzy_config  || failures+=("fizzy")
+  else
+    hdr "cortex / nebula / fizzy auth"
+    warn "1Password unavailable — can't refresh tokens from $TAILOR_OP_ACCOUNT"
+    hint "Unlock 1Password (Settings > Developer > 'Integrate with 1Password CLI'), then Recheck"
+    failures+=("cortex" "nebula" "fizzy")
+  fi
   verify_claude       || failures+=("claude")
   verify_codex        || failures+=("codex")
-  verify_pi           || failures+=("pi")
   verify_hey          || failures+=("hey")
   verify_basecamp     || failures+=("basecamp")
   verify_dropbox      || failures+=("dropbox")

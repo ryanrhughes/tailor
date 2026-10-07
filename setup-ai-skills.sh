@@ -12,10 +12,7 @@ AGENT_SKILLS_DIR="${AGENT_SKILLS_DIR:-$HOME/Work/agent-skills}"
 
 hdr "Agent skills"
 
-if [ ! -d "$AGENT_SKILLS_DIR/.git" ]; then
-  info "Cloning ryanrhughes/agent-skills to $AGENT_SKILLS_DIR..."
-  gh repo clone ryanrhughes/agent-skills "$AGENT_SKILLS_DIR"
-fi
+gh_clone ryanrhughes/agent-skills "$AGENT_SKILLS_DIR"
 
 if "$AGENT_SKILLS_DIR/scripts/sync" --install; then
   ok "agent skills synced; timer active"

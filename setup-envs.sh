@@ -8,13 +8,17 @@
 
 set -euo pipefail
 
-TAILOR_OP_ACCOUNT="${TAILOR_OP_ACCOUNT:-chamberofsecrets.1password.com}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
+
 ITEM="tailor-envs"
 TARGET="$HOME/.config/hypr/envs.conf"
 
 mkdir -p "$(dirname "$TARGET")"
 
-if ! item_json=$(op item get "$ITEM" --account "$TAILOR_OP_ACCOUNT" --format json 2>/dev/null); then
+op_ready || exit 1
+
+if ! item_json=$(op_run item get "$ITEM" --account "$TAILOR_OP_ACCOUNT" --format json 2>/dev/null); then
   echo "  ✗ 1Password item '$ITEM' not found in $TAILOR_OP_ACCOUNT"
   echo "    Create a Secure Note titled '$ITEM' with text fields where:"
   echo "      label = env var name (e.g. WEBUI)"

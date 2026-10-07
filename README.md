@@ -2,7 +2,7 @@
 
 Personal environment provisioning on top of Omarchy. Re-runnable, idempotent, opinionated.
 
-Tailor doesn't try to do everything — it builds on what Omarchy already provides (mise, node, claude/codex/pi/etc., AUR helpers) and layers in personal customization: env vars, SSH hosts, AI skills, internal CLI tooling, and per-tool config.
+Tailor doesn't try to do everything — it builds on what Omarchy already provides (mise, node, the AI CLIs, AUR helpers) and layers in personal customization: env vars, SSH hosts, AI skills, internal CLI tooling, and per-tool config.
 
 ## Quick start
 
@@ -13,18 +13,19 @@ Tailor doesn't try to do everything — it builds on what Omarchy already provid
    ./tailor.sh
    ```
 
-Run interactively and `tailor.sh` opens a gum picker: run everything, or select just the steps you want. Non-interactive runs (no TTY) do a full run.
+Run interactively and `tailor.sh` opens a gum picker: set up this machine, set up this machine and clone your projects, or pick individual steps. Non-interactive runs (no TTY) set up the machine without cloning projects.
 
 ```bash
 ./tailor.sh              # interactive picker
-./tailor.sh all          # run everything, no prompts
+./tailor.sh all          # set up this machine, no prompts
+./tailor.sh full         # set up this machine + clone projects
 ./tailor.sh envs ssh     # re-run specific steps (changed an env? just: ./tailor.sh envs)
 ./tailor.sh list         # list available steps
 ```
 
-Steps always execute in pipeline order regardless of the order you name them. A failing step doesn't abort the run (except `preflight`) — remaining steps continue and the summary tells you exactly which steps to re-run.
+Steps always execute in pipeline order regardless of the order you name them. When a step fails in an interactive run, you're asked to **Retry** it (after fixing whatever broke), **Skip** it, or **Abort** the run. Non-interactive runs skip and continue. Either way the summary tells you exactly which steps to re-run. Network operations (clones, downloads, `mise`/`yay` installs, `docker pull`) retry with backoff on their own (`TAILOR_RETRIES`, default 3), and a multi-part step like `apps` or `cli-tools` finishes its other parts before reporting the failure.
 
-The pre-flight bails with clear hints if anything's missing. First run on a fresh machine will tell you exactly what 1Password items to create.
+The pre-flight bails with clear hints if a basic tool is missing. 1Password is not fatal: `op` never gets a terminal and is capped at `TAILOR_OP_TIMEOUT` seconds, so a signed-out or locked 1Password can't hang the run. Interactive runs get a Retry/Skip prompt so you can unlock it in place. If you skip, the steps that need secrets (`envs`, `ssh`, `ai-proxy`) are skipped and listed for re-running. First run on a fresh machine will tell you exactly what 1Password items to create.
 
 ## Pipeline
 
@@ -34,23 +35,19 @@ Each step is `setup-<step>.sh`, idempotent, and can be invoked standalone or via
 |---|---|
 | `preflight` | Verifies the basics: pacman, gum, jq/curl/gh/docker, mise/node/npm, and 1Password auth. Bails on missing prerequisites. |
 | `cleanup` | Removes stale Tailor-managed artifacts from previous versions, like the old unofficial `figma-developer-mcp` install/config. |
-| `swap` | Memory/swap tuning over Omarchy's defaults: `vm.swappiness=10` (via `/etc/sysctl.d/99-swappiness.conf`) so idle window/render buffers stay resident, and `zram-size = ram / 2` (zstd) so swap stays in fast compressed RAM instead of the encrypted disk. Idempotent — only touches the system (and prompts for sudo) when a value differs; warns if disk swap < RAM (hibernation). No-op on high-RAM machines. |
-| `repos` | Clones Omarchy repos (installer/iso/pkgs) into `~/Work`. |
-| `apps` | Installs optional desktop apps via Omarchy (Dropbox, GeForce NOW, Tailscale, Voxtype) and AUR (Vesktop), sets Kitty as the Omarchy terminal, and starts the mailcatcher container. |
+| `apps` | Installs optional desktop apps via Omarchy (Dropbox, GeForce NOW, Tailscale, Voxtype, T3 Code) and AUR (Vesktop), installs Brave Origin and makes it the default browser, adds the 1Password extension to every Chromium-family browser via managed policy, and starts the mailcatcher container. |
 | `kanata` | Installs Kanata, the shared home-row layout, automatic keyboard detection, udev permissions, the desktop service, and gaming/status helpers. Retries interrupted setup and preserves gaming mode. Supports local device exclusions or an explicit keyboard list. |
 | `envs` | Reads 1P item `tailor-envs` → writes `~/.config/hypr/envs.conf`. |
 | `ssh` | Reads 1P SSH Key item `Github SSH Key` → writes `~/.ssh/id_ed25519_github` + `.pub`; reads 1P Server items tagged `tailor-ssh` → writes `~/.ssh/config` (managed block with markers; preserves any hand-written entries above/below). Pins `github.com` to the GitHub-named local key; every other host defaults to `Host * IdentityAgent ~/.1password/agent.sock`. |
 | `zsh` | Installs `omarchy-zsh` package and runs `omarchy-setup-zsh` (idempotent — detects template signature in `.zshrc`/`.bashrc`). |
-| `ai` | Installs missing AI CLI binaries (claude/codex/pi/opencode/gemini/copilot/playwright/ghui/hunk) via `mise use -g`, installs + logs into Mosaic, Claude Code attribution settings, OpenCode config + slash commands. |
+| `ai` | Installs + logs into Mosaic (token entered hidden), Claude Code attribution settings, OpenCode config + slash commands. The AI CLIs themselves come from Omarchy. |
 | `ai-proxy` | Configures Claude and Codex to use CLIProxyAPI on Mercury with the client token from 1Password. Adds missing settings, refreshes the proxy URL/token, and preserves models, hooks, plugins, and other settings. |
-| `pi` | Forces canonical Pi defaults (provider/model/thinking) and installs the canonical extension list. |
-| `cli-tools` | Installs internal CLIs (cortex, nebula, hey, fizzy, basecamp). Their skills come from `ai-skills`. |
+| `cli-tools` | Installs internal CLIs (cortex, nebula, fizzy); hey and basecamp come from Omarchy. Their skills come from `ai-skills`. |
 | `ai-skills` | Clones [ryanrhughes/agent-skills](https://github.com/ryanrhughes/agent-skills) and installs its sync timer: personal skills plus every outside skill in its `external.txt`, kept current automatically across machines. |
-| `cli-auth` | For token-based CLIs (cortex/nebula/fizzy): pulls token + config from 1P → writes the CLI's config file. Verifies Claude/Codex proxy credentials through authenticated model discovery, and checks Pi/HEY/Basecamp authentication. Loops with a `gum` prompt to recheck after fixing. |
-| `codexbar` | Installs `codexbar-waybar` (built from `~/Work/codexbar-waybar`), runs `codexbar-waybar-install`, and warns if `codexbar-tui` is installed. |
-| `herdr` | Installs the canonical Herdr config, Omarchy theme integration (`herdr.toml.tpl` + `theme-set.d/sync-herdr`), and links the `herdr-omarchy` plugin for Omarchy-style Herdr layouts (`hdl`, `hds`, `hdlm`, `hsl`). |
-| `config` | Copies `config/**` → `~/.config/` (excluding dirs owned by other steps) and `bin/**` → `~/.local/bin/`; sources `windows.conf` in `hyprland.conf` (legacy .conf systems only); applies 4K scaling to `monitors.conf` when detected. |
+| `cli-auth` | For token-based CLIs (cortex/nebula/fizzy): pulls token + config from 1P → writes the CLI's config file. Verifies Claude/Codex proxy credentials through authenticated model discovery, and checks HEY/Basecamp authentication. Loops with a `gum` prompt to recheck after fixing. |
+| `config` | Copies `config/**` → `~/.config/` (excluding dirs owned by other steps) and `bin/**` → `~/.local/bin/`. |
 | `dropbox` | Symlinks `~/Pictures`, `~/Videos`, `~/Documents` to their `~/Dropbox` counterparts (backs up existing dirs first). |
+| `projects` | Optional — only with `./tailor.sh full`, the picker's "+ clone projects" option, or by name. Clones Omarchy repos (installer/iso/pkgs) into `~/Work`. |
 
 Shared output helpers live in `lib/common.sh`; `lib/manual-action.sh` provides the gum-based "do this manually, then recheck" loop.
 
@@ -77,7 +74,21 @@ Claude receives `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, gateway model disc
 
 Existing model choices, unrelated config, and OAuth credential files are preserved. Changed configs get a one-time `.bak.before-tailor-ai-proxy` backup, configs and backups are private (mode `0600`), and identical reruns do not rewrite them. Both candidates are validated before either is written; unsupported TOML layouts fail without replacing the existing config. Rerun the step after changing the client token or URL in 1Password, then restart Claude/Codex to load the settings. Mercury must be reachable over Tailscale for API requests.
 
-`cli-auth` checks authenticated `/v1/models` access for both clients; it does not run inference or rely on cached OAuth login status. Run the provisioning regression checks with `python3 tests/ai-proxy-test.py`.
+Codex also receives these settings so it discovers model capabilities from the shared proxy. Routing inference through Mercury alone does not enable catalog discovery:
+
+```toml
+[features]
+api_key_model_discovery = true
+
+[model_providers.cliproxyapi]
+model_catalog_url = "http://mercury:8317/v1/models"
+```
+
+The catalog URL follows the `base_url` from 1Password. This exposes service tiers advertised by Mercury, including Ultrafast for GPT-6 Astra. After setup, restart Codex and refresh T3's Codex provider/model list to update an already-running T3 instance. Select Astra to see its tiers; a different default model, such as Sol, has different capabilities. If migrating from the earlier local-catalog workaround, remove the top-level `model_catalog_json` setting from `~/.codex/config.toml`: that startup override takes precedence over discovery. Tailor preserves existing local-catalog overrides, so they need this explicit migration.
+
+Existing model choices, unrelated config, and OAuth credential files are preserved. Changed configs get a one-time `.bak.before-tailor-ai-proxy` backup, configs and backups are private (mode `0600`), and identical reruns do not rewrite them. Both candidates are validated before either is written; unsupported TOML layouts fail without replacing the existing config. Rerun the step after changing the client token or URL in 1Password, then restart Claude/Codex to load the settings. Mercury must be reachable over Tailscale for API requests.
+
+`cli-auth` checks authenticated `/v1/models` access for both clients; it does not verify service-tier metadata, run inference or rely on cached OAuth login status. Run the provisioning regression checks with `python3 tests/ai-proxy-test.py`.
 
 ## Kanata
 
@@ -138,17 +149,11 @@ Installed to `~/.config/opencode/command/`:
 - `/create-prd` — generate a PRD from a feature description
 - `/generate-tasks` — generate a task list from requirements/PRD
 
-## Herdr plugin
-
-`herdr-omarchy/` is a standalone Herdr plugin for Omarchy-style layouts. Tailor links it from this checkout and installs lightweight `hdl` / `hds` / `hdlm` / `hsl` dispatchers that run the plugin implementation from inside a Herdr pane. Others can install the plugin directly with:
-
-```bash
-herdr plugin install ryanrhughes/tailor/herdr-omarchy --yes
-```
-
 ## Environment variables
 
 - `TAILOR_OP_ACCOUNT` — 1Password account hosting tailor's items. Default: `chamberofsecrets.1password.com`.
+- `TAILOR_OP_TIMEOUT` — seconds any single `op` call may take before tailor gives up on it (for example, while the app waits to be unlocked). Default: `20`.
+- `TAILOR_RETRIES` — attempts for network operations before a step reports failure. Default: `3`.
 - `TAILOR_AI_PROXY_ITEM` — 1Password item name or UUID supplying the shared Claude/Codex proxy client key and URL. Default: `CLI Proxy API`.
 - `TAILOR_GITHUB_SSH_KEY_ITEM_UUID` — 1Password SSH Key item used for the local GitHub key. Default: `dp7wepzy37ou6dirqsc4jmje7i`.
 - `TAILOR_GITHUB_SSH_KEY_PATH` — local path for the GitHub-only SSH private key. Default: `~/.ssh/id_ed25519_github`.
@@ -160,6 +165,6 @@ Per the "tailor builds on Omarchy baseline" principle, these belong upstream:
 - Installing system utilities (jq, curl, gh, docker, mise) — Omarchy.
 - Configuring node via mise — Omarchy.
 
-AI CLIs are the exception: the `ai` step ensures the full canonical set (claude, codex, pi, opencode, gemini, copilot, playwright, ghui, hunk) on every machine via `mise use -g`, so a machine is usable even when Omarchy's own install lags.
+- Installing the AI CLIs (claude, codex, opencode, ...) — Omarchy.
 
 If a fresh-machine tailor run fails the preflight on one of these, the fix is to file an Omarchy issue / re-run Omarchy install — not to add install logic here.

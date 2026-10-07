@@ -3,8 +3,9 @@
 # Idempotent: safe to re-run, in whole or one step at a time.
 #
 # Usage:
-#   ./tailor.sh              interactive picker (gum): everything, or select steps
-#   ./tailor.sh all          run everything (also the non-interactive default)
+#   ./tailor.sh              interactive picker (gum): set up, set up + projects, or pick steps
+#   ./tailor.sh all          set up this machine (also the non-interactive default)
+#   ./tailor.sh full         set up this machine + clone projects
 #   ./tailor.sh <step>...    run specific steps, e.g. ./tailor.sh envs ssh
 #   ./tailor.sh list         list available steps
 
@@ -19,24 +20,35 @@ source "$SCRIPT_DIR/lib/common.sh"
 STEPS=(
   "preflight|Verify prerequisites (Omarchy, toolchain, 1Password)"
   "cleanup|Remove stale artifacts from previous tailor versions"
-  "swap|Memory/swap tuning (lower swappiness + grow zram)"
-  "repos|Clone Omarchy + personal repos into ~/Work"
-  "apps|Desktop apps (Dropbox, Tailscale, Voxtype, ...) + mailcatcher"
+  "apps|Desktop apps, Brave Origin (default) + 1Password extension, mailcatcher"
   "kanata|Kanata homerow mods, keyboard access + desktop service"
   "envs|~/.config/hypr/envs.conf from 1Password"
   "ssh|GitHub SSH key + ~/.ssh/config from 1Password"
   "zsh|zsh via omarchy-zsh"
-  "ai|AI CLI binaries, Mosaic, Claude Code + OpenCode config"
+  "ai|Mosaic, Claude Code + OpenCode config"
   "ai-proxy|Claude + Codex CLIProxyAPI settings from 1Password"
-  "pi|Pi settings + extensions"
-  "cli-tools|Internal CLIs (cortex, nebula, hey, fizzy, basecamp)"
+  "cli-tools|Internal CLIs (cortex, nebula, fizzy)"
   "ai-skills|Agent skills sync (ryanrhughes/agent-skills + timer)"
   "cli-auth|CLI tokens from 1Password + proxy/OAuth verification"
-  "codexbar|codexbar-waybar install + Waybar integration"
-  "herdr|Herdr config, theme sync + layout plugin"
   "config|Dotfiles, ~/.local/bin scripts, Hyprland tweaks"
   "dropbox|Link ~/Pictures ~/Videos ~/Documents to Dropbox"
+  "projects|Clone project repos into ~/Work (optional)"
 )
+
+# Steps left out of a default run; included by `full` or when picked.
+OPTIONAL_STEPS=(projects)
+
+is_optional() {
+  printf '%s\n' "${OPTIONAL_STEPS[@]}" | grep -qx "$1"
+}
+
+# Every step except the optional ones.
+default_step_ids() {
+  local id
+  for id in $(step_ids); do
+    is_optional "$id" || echo "$id"
+  done
+}
 
 step_ids() {
   local entry
@@ -66,47 +78,132 @@ list_steps() {
   done
 }
 
-# Run the given step ids in registry order, keep going on failure, and
-# summarize at the end. A preflight failure aborts immediately — nothing
-# downstream is trustworthy without it.
+# Steps that can't do anything without 1Password. cli-auth also reads
+# 1Password but handles it being unavailable on its own.
+OP_STEPS=(envs ssh ai-proxy)
+
+# setup-preflight.sh exit code: everything passed except 1Password.
+PREFLIGHT_NO_OP=3
+
+# Decided once here: inside $(...) stdout is a pipe, so is_interactive would
+# always say no.
+INTERACTIVE=false
+is_interactive && INTERACTIVE=true
+
+step_needs_op() {
+  local id="$1"
+  # ai-proxy can run from environment-supplied credentials instead.
+  if [ "$id" = "ai-proxy" ] && [ -n "${TAILOR_AI_PROXY_BASE_URL:-}" ]; then
+    return 1
+  fi
+  printf '%s\n' "${OP_STEPS[@]}" | grep -qx "$id"
+}
+
+# After a failed step, ask whether to retry it, skip it, or stop the run.
+# Prints retry, skip, or abort. Non-interactive runs always skip.
+failure_choice() {
+  local id="$1" rc="$2" choice options=("Retry" "Skip" "Abort")
+  [ "$INTERACTIVE" = true ] || { echo skip; return; }
+
+  # Nothing downstream is trustworthy without preflight; no skipping it.
+  [ "$id" = "preflight" ] && options=("Retry" "Abort")
+
+  echo "" >&2
+  choice=$(gum choose --header "Step '$id' failed (exit $rc). Fix it, then:" \
+    "${options[@]}") || choice="Abort"
+  echo "$choice" | tr '[:upper:]' '[:lower:]'
+}
+
+summarize() {
+  hdr "tailor: summary"
+  [ "${#done_steps[@]}" -gt 0 ] && ok "${#done_steps[@]} step(s) completed: ${done_steps[*]}"
+  if [ "${#skipped[@]}" -gt 0 ]; then
+    warn "${#skipped[@]} step(s) skipped (1Password unavailable): ${skipped[*]}"
+  fi
+  if [ "${#failed[@]}" -gt 0 ]; then
+    fail "${#failed[@]} step(s) failed: ${failed[*]}"
+  fi
+  local rerun=("${failed[@]}" "${skipped[@]}")
+  if [ "${#rerun[@]}" -gt 0 ]; then
+    hint "Re-run just those: ./tailor.sh ${rerun[*]}"
+    return 1
+  fi
+}
+
+# Run the given step ids in registry order. A failed step offers
+# Retry/Skip/Abort when interactive; otherwise it's recorded and the run
+# continues. Preflight failures stop the run (except a missing 1Password,
+# which only skips the steps that need it).
 run_steps() {
   local requested=("$@")
-  local entry id failed=() ran=()
+  local entry id rc choice op_available=true
+  local done_steps=() failed=() skipped=()
 
   for entry in "${STEPS[@]}"; do
     id="${entry%%|*}"
     printf '%s\n' "${requested[@]}" | grep -qx "$id" || continue
 
-    hdr "tailor: $id"
-    ran+=("$id")
-    if "$SCRIPT_DIR/setup-$id.sh"; then
+    if [ "$op_available" = false ] && step_needs_op "$id"; then
+      hdr "tailor: $id"
+      warn "skipped — needs 1Password"
+      skipped+=("$id")
       continue
-    elif [ "$id" = "preflight" ]; then
-      exit 1
-    else
-      failed+=("$id")
-      warn "step '$id' failed — continuing with remaining steps"
     fi
+
+    while true; do
+      hdr "tailor: $id"
+      rc=0
+      "$SCRIPT_DIR/setup-$id.sh" || rc=$?
+
+      if [ "$rc" -eq 0 ]; then
+        done_steps+=("$id")
+        break
+      fi
+      if [ "$id" = "preflight" ] && [ "$rc" -eq "$PREFLIGHT_NO_OP" ]; then
+        op_available=false
+        warn "continuing without 1Password — will skip: ${OP_STEPS[*]}"
+        done_steps+=("$id")
+        break
+      fi
+
+      choice=$(failure_choice "$id" "$rc")
+      case "$choice" in
+        retry)
+          info "Retrying '$id'..."
+          ;;
+        skip)
+          [ "$id" = "preflight" ] && exit 1
+          failed+=("$id")
+          warn "step '$id' failed — continuing with remaining steps"
+          break
+          ;;
+        *)
+          failed+=("$id")
+          summarize || true
+          exit 1
+          ;;
+      esac
+    done
   done
 
-  hdr "tailor: summary"
-  if [ "${#failed[@]}" -gt 0 ]; then
-    fail "${#failed[@]}/${#ran[@]} step(s) failed: ${failed[*]}"
-    hint "Re-run just those: ./tailor.sh ${failed[*]}"
-    exit 1
-  fi
-  ok "${#ran[@]} step(s) completed: ${ran[*]}"
+  summarize || exit 1
 }
 
 interactive_pick() {
   local mode
   mode=$(gum choose --header "Tailor — what do you want to run?" \
-    "Run everything" "Pick steps") || exit 0
+    "Set up this machine" "Set up this machine + clone projects" "Pick steps") || exit 0
 
-  if [ "$mode" = "Run everything" ]; then
-    run_steps $(step_ids)
-    return
-  fi
+  case "$mode" in
+    "Set up this machine")
+      run_steps $(default_step_ids)
+      return
+      ;;
+    "Set up this machine + clone projects")
+      run_steps $(step_ids)
+      return
+      ;;
+  esac
 
   local entry choices=() picked
   for entry in "${STEPS[@]}"; do
@@ -134,11 +231,15 @@ main() {
         exit 0
         ;;
       all | --all)
+        run_steps $(default_step_ids)
+        exit 0
+        ;;
+      full | --full)
         run_steps $(step_ids)
         exit 0
         ;;
       help | --help | -h)
-        sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+        sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
     esac
@@ -156,11 +257,11 @@ main() {
     exit
   fi
 
-  # No args: gum picker when interactive, full run otherwise (CI/provisioning).
-  if [ -t 0 ] && [ -t 1 ] && command -v gum >/dev/null 2>&1; then
+  # No args: gum picker when interactive, machine setup otherwise (provisioning).
+  if [ "$INTERACTIVE" = true ]; then
     interactive_pick
   else
-    run_steps $(step_ids)
+    run_steps $(default_step_ids)
   fi
 }
 

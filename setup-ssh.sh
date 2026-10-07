@@ -28,7 +28,9 @@
 
 set -euo pipefail
 
-TAILOR_OP_ACCOUNT="${TAILOR_OP_ACCOUNT:-chamberofsecrets.1password.com}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
+
 TAILOR_GITHUB_SSH_KEY_ITEM_UUID="${TAILOR_GITHUB_SSH_KEY_ITEM_UUID:-dp7wepzy37ou6dirqsc4jmje7i}"
 DEFAULT_TAILOR_GITHUB_SSH_KEY_PATH="$HOME/.ssh/id_ed25519_github"
 TAILOR_GITHUB_SSH_KEY_PATH="${TAILOR_GITHUB_SSH_KEY_PATH:-$DEFAULT_TAILOR_GITHUB_SSH_KEY_PATH}"
@@ -46,12 +48,11 @@ esac
 
 mkdir -p ~/.ssh "$(dirname "$TAILOR_GITHUB_SSH_KEY_PATH")"
 
-# Backup
-[ -f ~/.ssh/config ] && cp ~/.ssh/config ~/.ssh/config.backup."$(date +%Y%m%d_%H%M%S)"
+op_ready || exit 1
 
 echo "  Installing GitHub SSH key from 1Password item $TAILOR_GITHUB_SSH_KEY_ITEM_UUID..."
 
-if ! github_key_item=$(op item get "$TAILOR_GITHUB_SSH_KEY_ITEM_UUID" \
+if ! github_key_item=$(op_run item get "$TAILOR_GITHUB_SSH_KEY_ITEM_UUID" \
     --account "$TAILOR_OP_ACCOUNT" \
     --format json 2>/dev/null); then
   echo "  ✗ Failed to fetch GitHub SSH key item $TAILOR_GITHUB_SSH_KEY_ITEM_UUID from $TAILOR_OP_ACCOUNT"
@@ -136,7 +137,7 @@ fi
 
 echo "  Querying $TAILOR_OP_ACCOUNT for Server items tagged '$TAG'..."
 
-if ! items=$(op item list \
+if ! items=$(op_run item list \
     --categories Server \
     --tags "$TAG" \
     --account "$TAILOR_OP_ACCOUNT" \
@@ -163,7 +164,10 @@ else
   echo "  Found $count host(s) — fetching details..."
   while read -r summary; do
     uuid=$(echo "$summary" | jq -r '.id')
-    full=$(op item get "$uuid" --account "$TAILOR_OP_ACCOUNT" --format json)
+    if ! full=$(op_run item get "$uuid" --account "$TAILOR_OP_ACCOUNT" --format json); then
+      echo "    ⚠ Skipping item $uuid — could not fetch it from 1Password"
+      continue
+    fi
 
     title=$(echo "$full" | jq -r '.title')
     alias=$(echo "$full" | jq -r '
@@ -254,15 +258,24 @@ else
   : > ~/.ssh/config.tmp
 fi
 
+# $(...) drops trailing blank lines, so the separator doesn't grow each run.
+unmanaged=$(cat ~/.ssh/config.tmp)
 {
-  cat ~/.ssh/config.tmp
-  echo ""
+  [ -n "$unmanaged" ] && printf '%s\n\n' "$unmanaged"
   echo "$MARKER_START"
   echo "$block"
   echo "$MARKER_END"
-} > ~/.ssh/config
-
+} > ~/.ssh/config.new
 rm -f ~/.ssh/config.tmp
-chmod 600 ~/.ssh/config
 
-echo "  ✓ SSH config updated"
+if [ -f ~/.ssh/config ] && cmp -s ~/.ssh/config.new ~/.ssh/config; then
+  rm -f ~/.ssh/config.new
+  chmod 600 ~/.ssh/config
+  echo "  ✓ SSH config already up to date"
+else
+  # Back up only when something actually changes, so re-runs don't pile up copies.
+  [ -f ~/.ssh/config ] && cp ~/.ssh/config ~/.ssh/config.backup."$(date +%Y%m%d_%H%M%S)"
+  chmod 600 ~/.ssh/config.new
+  mv ~/.ssh/config.new ~/.ssh/config
+  echo "  ✓ SSH config updated"
+fi

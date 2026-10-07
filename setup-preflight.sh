@@ -1,6 +1,8 @@
 #!/bin/bash
 # Pre-flight checks for tailor.
-# Exits non-zero on any critical failure with a clear "fix this then re-run" message.
+# Exits 1 on any critical failure with a clear "fix this then re-run" message.
+# Exits 3 when everything passed except 1Password: tailor.sh then runs the
+# remaining steps and skips the ones that need secrets.
 #
 # Checks only the basics tailor itself relies on: pacman/gum, the mise
 # toolchain, common utilities, and 1Password auth. Everything else is
@@ -58,21 +60,13 @@ check "npm available" \
   'command -v npm' \
   "npm ships with mise's node install: mise use -g node@latest"
 
-# AI CLIs (claude, codex, pi, opencode, gemini, copilot, playwright, ghui)
-# are installed/repaired by tailor via `mise use -g` in setup-ai.sh — not
-# pre-flight requirements.
+# AI CLIs (claude, codex, opencode, ...) come from Omarchy, not tailor.
 
 hdr "Secrets (1Password)"
-check "op CLI installed" \
-  'command -v op' \
-  "Install 1Password CLI: https://developer.1password.com/docs/cli/get-started/"
-
-# Use `op vault list` rather than `op whoami` because the desktop app integration
-# (Settings > Developer > Integrate with 1Password CLI) leaves whoami reporting
-# "not signed in" while CLI commands actually succeed via biometric auth.
-check "op CLI authenticated (can list vaults)" \
-  'op vault list' \
-  "Enable 1Password app: Settings > Developer > 'Integrate with 1Password CLI', OR: op account add && eval \$(op signin)"
+# Never fatal: interactive runs get a Retry/Skip prompt, and skipping just
+# means the 1Password-backed steps are skipped this run.
+op_ok=true
+op_ready || op_ok=false
 
 # Tailor configs come from 1Password directly during the main tailor run:
 # envs from a 'tailor-envs' item, the GitHub SSH key from the 'Github SSH Key'
@@ -83,6 +77,11 @@ echo ""
 if [ "$errors" -gt 0 ]; then
   echo "$errors pre-flight check(s) failed. Fix the above and re-run tailor."
   exit 1
+fi
+
+if [ "$op_ok" = false ]; then
+  echo "Pre-flight passed, but 1Password is unavailable."
+  exit 3
 fi
 
 echo "All pre-flight checks passed."
