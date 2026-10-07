@@ -8,5 +8,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 
-hdr "Claude + Codex proxy authentication"
+hdr "Claude + Codex proxy authentication and model discovery"
 python3 "$SCRIPT_DIR/lib/ai-proxy.py" setup "$@"
+info "Restart Claude/Codex and refresh T3's Codex model list to load updated capabilities."

@@ -64,6 +64,7 @@ trust_level = "trusted"
 
 [features]
 hooks = true
+api_key_model_discovery = false
 ''')
     (self.claude.parent / ".credentials.json").write_text('{"oauth": "unchanged"}')
     (self.codex.parent / "auth.json").write_text('{"oauth": "unchanged"}')
@@ -75,9 +76,11 @@ hooks = true
     self.assertEqual(claude["env"]["ANTHROPIC_AUTH_TOKEN"], TOKEN)
     self.assertEqual(claude["env"]["ANTHROPIC_BASE_URL"], "http://mercury:8317")
     self.assertEqual(codex["model_provider"], "cliproxyapi")
+    self.assertTrue(codex["features"]["api_key_model_discovery"])
     provider = codex["model_providers"]["cliproxyapi"]
     self.assertEqual(provider["experimental_bearer_token"], TOKEN)
     self.assertEqual(provider["base_url"], "http://mercury:8317/v1")
+    self.assertEqual(provider["model_catalog_url"], "http://mercury:8317/v1/models")
     self.assertFalse(provider["requires_openai_auth"])
     before = [(p.read_bytes(), p.stat().st_mtime_ns) for p in (self.claude, self.codex)]
     self.run_setup()
@@ -101,11 +104,14 @@ hooks = true
     self.assertEqual(codex["model"], "gpt-example")
     self.assertEqual(codex["model_reasoning_effort"], "high")
     self.assertTrue(codex["features"]["hooks"])
+    self.assertTrue(codex["features"]["api_key_model_discovery"])
     self.assertTrue(self.codex.read_text().startswith("# Keep the user's comments"))
     self.set_item(token="rotated-client-token", url="http://new-proxy:8317/v1/")
     self.run_setup()
     self.assertEqual(json.loads(self.claude.read_text())["env"]["ANTHROPIC_BASE_URL"], "http://new-proxy:8317")
-    self.assertEqual(tomllib.loads(self.codex.read_text())["model_providers"]["cliproxyapi"]["experimental_bearer_token"], "rotated-client-token")
+    provider = tomllib.loads(self.codex.read_text())["model_providers"]["cliproxyapi"]
+    self.assertEqual(provider["experimental_bearer_token"], "rotated-client-token")
+    self.assertEqual(provider["model_catalog_url"], "http://new-proxy:8317/v1/models")
     for path in old:
       backup = path.with_name(path.name + ".bak.before-tailor-ai-proxy")
       self.assertEqual(backup.read_bytes(), old[path])
@@ -120,6 +126,7 @@ hooks = true
 [model_providers."cliproxyapi"]
 name = "CLIProxyAPI"
 base_url = "http://old-proxy/v1"
+model_catalog_url = "http://old-proxy/v1/models"
 experimental_bearer_token = "old-token"
 requires_openai_auth = true
 request_max_retries = 9
@@ -129,6 +136,7 @@ request_max_retries = 9
     self.assertEqual(provider["request_max_retries"], 9)
     self.assertFalse(provider["requires_openai_auth"])
     self.assertEqual(provider["experimental_bearer_token"], TOKEN)
+    self.assertEqual(provider["model_catalog_url"], "http://mercury:8317/v1/models")
 
   def test_bad_config_leaves_both_files_untouched(self):
     self.write_existing()

@@ -55,9 +55,15 @@ def op_credentials():
   item_name = os.environ.get("TAILOR_AI_PROXY_ITEM", "CLI Proxy API")
   timeout = float(os.environ.get("TAILOR_OP_TIMEOUT", "20"))
   try:
+    # With no accounts configured, op prompts on /dev/tty even without stdin.
+    accounts = subprocess.run(["op", "account", "list", "--format", "json"], capture_output=True,
+                              text=True, check=False, timeout=timeout, stdin=subprocess.DEVNULL)
+    if accounts.returncode or not json.loads(accounts.stdout or "[]"):
+      raise ValueError("1Password CLI has no accounts; enable the desktop app integration or run 'op account add'.")
     result = subprocess.run(
       ["op", "item", "get", item_name, "--account", account, "--format", "json"],
       capture_output=True, text=True, check=False, timeout=timeout,
+      stdin=subprocess.DEVNULL,  # never let op fall into its own interactive prompts
     )
   except subprocess.TimeoutExpired:
     raise ValueError(f"1Password CLI did not answer within {timeout:g}s; it is probably waiting for "
@@ -126,6 +132,8 @@ def codex_settings(text, base_url, token):
   original = tomllib.loads(text)
   expected = copy.deepcopy(original)
   expected["model_provider"] = "cliproxyapi"
+  # Custom providers need explicit discovery to expose service tiers such as Ultrafast.
+  expected.setdefault("features", {})["api_key_model_discovery"] = True
   provider = expected.setdefault("model_providers", {}).setdefault("cliproxyapi", {})
   # Conflicting custom auth mechanisms need an explicit migration, not a blind merge.
   if any(key in provider for key in ("auth", "env_key")):
@@ -133,6 +141,7 @@ def codex_settings(text, base_url, token):
   managed = {
     "name": "CLIProxyAPI",
     "base_url": base_url + "/v1",
+    "model_catalog_url": base_url + "/v1/models",
     "experimental_bearer_token": token,
     "wire_api": "responses",
     "requires_openai_auth": False,
@@ -142,6 +151,8 @@ def codex_settings(text, base_url, token):
   if original == expected:
     return text
   updated = patch_table(text, (), {"model_provider": "cliproxyapi"})
+  if original.get("features", {}).get("api_key_model_discovery") is not True:
+    updated = patch_table(updated, ("features",), {"api_key_model_discovery": True})
   old_provider = original.get("model_providers", {}).get("cliproxyapi", {})
   changes = {key: value for key, value in managed.items() if old_provider.get(key) != value}
   if changes:
